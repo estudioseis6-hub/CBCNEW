@@ -1,140 +1,180 @@
-<br>
-
-<img src="https://user-images.githubusercontent.com/7164864/217935870-c0bc60a3-6fc0-4047-b011-7b4c59488c91.png" alt="Streamlit logo" style="margin-top:50px"></img>
-
-# Welcome to Streamlit 👋
-
-**A faster way to build and share data apps.**
-
-## What is Streamlit?
-
-Streamlit lets you transform Python scripts into interactive web apps in minutes, instead of weeks. Build dashboards, generate reports, or create chat apps. Once you’ve created an app, you can use our [Community Cloud platform](https://streamlit.io/cloud) to deploy, manage, and share your app.
-
-### Why choose Streamlit?
-
-- **Simple and Pythonic:** Write beautiful, easy-to-read code.
-- **Fast, interactive prototyping:** Let others interact with your data and provide feedback quickly.
-- **Live editing:** See your app update instantly as you edit your script.
-- **Open-source and free:** Join a vibrant community and contribute to Streamlit's future.
-
-## Installation
-
-Open a terminal and run:
-
-```bash
-$ pip install streamlit
-$ streamlit hello
-```
-
-If this opens our sweet _Streamlit Hello_ app in your browser, you're all set! If not, head over to [our docs](https://docs.streamlit.io/get-started) for specific installs.
-
-The app features a bunch of examples of what you can do with Streamlit. Jump to the [quickstart](#quickstart) section to understand how that all works.
-
-<img src="https://user-images.githubusercontent.com/7164864/217936487-1017784e-68ec-4e0d-a7f6-6b97525ddf88.gif" alt="Streamlit Hello" width=500 href="none"></img>
-
-## Quickstart
-
-### A little example
-
-Create a new file named `streamlit_app.py` in your project directory with the following code:
-```python
 import streamlit as st
-x = st.slider("Select a value")
-st.write(x, "squared is", x * x)
-```
+import pandas as pd
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import date
 
-Now run it to open the app!
-```
-$ streamlit run streamlit_app.py
-```
+st.set_page_config(page_title="CBC", page_icon="📊", layout="wide")
 
-<img src="https://user-images.githubusercontent.com/7164864/215172915-cf087c56-e7ae-449a-83a4-b5fa0328d954.gif" width=300 alt="Little example"></img>
+DB = "postgresql://neondb_owner:npg_0QazKFN8logm@ep-sweet-block-aq1035ng-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require"
 
-### Give me more!
+FONDOS = {"1 - Efectivo $": 1, "2 - Efectivo Ale": 2, "3 - Santander": 3, "4 - Mercado Pago": 4, "5 - FCI": 5, "6 - Cheques": 6}
 
-Streamlit comes in with [a ton of additional powerful elements](https://docs.streamlit.io/develop/api-reference) to spice up your data apps and delight your viewers. Some examples:
+def get_conn():
+    return psycopg2.connect(DB, cursor_factory=RealDictCursor)
 
-<table border="0">
-  <tr>
-    <td>
-      <a target="_blank" href="https://docs.streamlit.io/develop/api-reference/widgets">
-        <img src="https://user-images.githubusercontent.com/7164864/217936099-12c16f8c-7fe4-44b1-889a-1ac9ee6a1b44.png" style="max-height:150px; width:auto; display:block;">
-      </a>
-    </td>
-    <td>
-      <a target="_blank" href="https://docs.streamlit.io/develop/api-reference/data/st.dataframe">
-        <img src="https://user-images.githubusercontent.com/7164864/215110064-5eb4e294-8f30-4933-9563-0275230e52b5.gif" style="max-height:150px; width:auto; display:block;">
-      </a>
-    </td>
-    <td>
-      <a target="_blank" href="https://docs.streamlit.io/develop/api-reference/charts">
-        <img src="https://user-images.githubusercontent.com/7164864/215174472-bca8a0d7-cf4b-4268-9c3b-8c03dad50bcd.gif" style="max-height:150px; width:auto; display:block;">
-      </a>
-    </td>
-    <td>
-      <a target="_blank" href="https://docs.streamlit.io/develop/api-reference/layout">
-        <img src="https://user-images.githubusercontent.com/7164864/217936149-a35c35be-0d96-4c63-8c6a-1c4b52aa8f60.png" style="max-height:150px; width:auto; display:block;">
-      </a>
-    </td>
-    <td>
-      <a target="_blank" href="https://docs.streamlit.io/develop/concepts/multipage-apps">
-        <img src="https://user-images.githubusercontent.com/7164864/215173883-eae0de69-7c1d-4d78-97d0-3bc1ab865e5b.gif" style="max-height:150px; width:auto; display:block;">
-      </a>
-    </td>
-    <td>
-      <a target="_blank" href="https://streamlit.io/gallery">
-        <img src="https://user-images.githubusercontent.com/7164864/215109229-6ae9111f-e5c1-4f0b-b3a2-87a79268ccc9.gif" style="max-height:150px; width:auto; display:block;">
-      </a>
-    </td>
-  </tr>
-  <tr>
-    <td>Input widgets</td>
-    <td>Dataframes</td>
-    <td>Charts</td>
-    <td>Layout</td>
-    <td>Multi-page apps</td>
-    <td>Fun</td>
-  </tr>
-</table>
+def query(sql, params=None):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return pd.DataFrame(cur.fetchall())
+    finally:
+        conn.close()
 
+def execute(sql, params=None):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
 
-Our vibrant creators community also extends Streamlit capabilities using  🧩 [Streamlit Components](https://streamlit.io/components).
+def get_titulares():
+    df = query("SELECT id, nombre FROM titulares ORDER BY nombre")
+    return dict(zip(df['nombre'], df['id']))
 
-## Get inspired
+def get_ultimos(limit=20):
+    return query(f"SELECT fecha, id_titular, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
 
-There's so much you can build with Streamlit:
-- 🤖  [LLMs & chatbot apps](https://streamlit.io/gallery?category=llms)
-- 🧬  [Science & technology apps](https://streamlit.io/gallery?category=science-technology)
-- 💬  [NLP & language apps](https://streamlit.io/gallery?category=nlp-language)
-- 🏦  [Finance & business apps](https://streamlit.io/gallery?category=finance-business)
-- 🗺  [Geography & society apps](https://streamlit.io/gallery?category=geography-society)
-- and more!
+with st.sidebar:
+    st.markdown("### CBC Sistema Contable")
+    pantalla = st.radio("Menu", ["Dashboard", "Cargar Movimiento", "Plan de Cuentas", "Titulares", "CashFlow", "Balance"])
+    st.caption("Neon PostgreSQL")
 
-**Check out [our gallery!](https://streamlit.io/gallery)** 🎈
+st.title("CBC Sistema Contable")
 
-## Community Cloud
+if pantalla == "Dashboard":
+    try:
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("Cuentas", query("SELECT COUNT(*) as n FROM plan_de_cuentas").iloc[0]['n'])
+        c2.metric("Titulares", query("SELECT COUNT(*) as n FROM titulares").iloc[0]['n'])
+        c3.metric("Movimientos", query("SELECT COUNT(*) as n FROM cashflow").iloc[0]['n'])
+        c4.metric("Comprobantes", query("SELECT COUNT(*) as n FROM operaciones").iloc[0]['n'])
+        st.dataframe(get_ultimos(10), use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"Error: {e}")
 
-Deploy, manage and share your apps for free using our [Community Cloud](https://streamlit.io/cloud)! Sign-up [here](https://share.streamlit.io/signup). <br><br>
-<img src="https://user-images.githubusercontent.com/7164864/214965336-64500db3-0d79-4a20-8052-2dda883902d2.gif" width="400"></img>
+elif pantalla == "Cargar Movimiento":
+    modo = st.radio("Modo", ["Formulario", "Pantalla completa"], horizontal=True)
+    titulares = get_titulares()
+    if modo == "Formulario":
+        with st.form("form"):
+            col1, col2 = st.columns(2)
+            fecha = col1.date_input("Fecha", value=date.today())
+            fondo = col2.selectbox("Fondo", list(FONDOS.keys()))
+            titular = st.selectbox("Titular", list(titulares.keys()))
+            concepto = st.text_input("Concepto")
+            col3, col4 = st.columns(2)
+            importe = col3.number_input("Importe (negativo=egreso)", value=0.0, step=100.0)
+            cuenta = col4.text_input("Cuenta contable")
+            if st.form_submit_button("Guardar"):
+                if not concepto:
+                    st.error("Falta el concepto.")
+                else:
+                    try:
+                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe) VALUES (%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe))
+                        st.success(f"Guardado: {concepto} | ${importe:,.2f}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+    else:
+        try:
+            total = float(query("SELECT COALESCE(SUM(importe),0) as t FROM cashflow").iloc[0]['t'])
+            c1,c2 = st.columns(2)
+            c1.metric("Total", f"${total:,.2f}")
+            c2.metric("Movimientos", query("SELECT COUNT(*) as n FROM cashflow").iloc[0]['n'])
+        except Exception as e:
+            st.warning(f"{e}")
+        col_form, col_tabla = st.columns([1, 2])
+        with col_form:
+            fecha = st.date_input("Fecha", value=date.today(), key="f")
+            fondo = st.selectbox("Fondo", list(FONDOS.keys()), key="fo")
+            titular = st.selectbox("Titular", list(titulares.keys()), key="t")
+            concepto = st.text_input("Concepto", key="c")
+            importe = st.number_input("Importe", value=0.0, step=100.0, key="i")
+            cuenta = st.text_input("Cuenta", key="cu")
+            if st.button("Guardar", use_container_width=True):
+                if not concepto:
+                    st.error("Falta concepto.")
+                else:
+                    try:
+                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe) VALUES (%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe))
+                        st.success(f"OK: ${importe:,.2f}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        with col_tabla:
+            try:
+                st.dataframe(get_ultimos(15), use_container_width=True, hide_index=True, height=450)
+            except Exception as e:
+                st.error(f"{e}")
 
-## Resources
+elif pantalla == "Plan de Cuentas":
+    col1, col2 = st.columns(2)
+    tipo = col1.selectbox("Tipo", ["Todos","Resultados","Patrimonial","Movimiento"])
+    buscar = col2.text_input("Buscar")
+    sql = "SELECT niv1_desc Tipo, niv2_desc Subtipo, nombre Cuenta, signo Signo FROM plan_de_cuentas"
+    where = []
+    if tipo != "Todos": where.append(f"niv1_desc='{tipo}'")
+    if buscar: where.append(f"nombre ILIKE '%{buscar}%'")
+    if where: sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY niv1,niv2,niv3,niv4,niv5"
+    try:
+        st.dataframe(query(sql), use_container_width=True, hide_index=True, height=550)
+    except Exception as e:
+        st.error(f"{e}")
 
-- Explore our [docs](https://docs.streamlit.io) to learn how Streamlit works.
-- Ask questions and get help in our [community forum](https://discuss.streamlit.io).
-- Read our [blog](https://blog.streamlit.io) for tips from developers and creators.
-- Extend Streamlit's capabilities by installing or creating your own [Streamlit Components](https://streamlit.io/components).
-- Help others find and play with your app by using the Streamlit GitHub badge in your repository:
-```markdown
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](URL_TO_YOUR_APP)
-```
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/streamlit/roadmap)
+elif pantalla == "Titulares":
+    buscar = st.text_input("Buscar")
+    sql = "SELECT id, nivel1 Tipo, nombre FROM titulares"
+    if buscar: sql += f" WHERE nombre ILIKE '%{buscar}%'"
+    sql += " ORDER BY nivel1, nombre"
+    try:
+        st.dataframe(query(sql), use_container_width=True, hide_index=True, height=550)
+    except Exception as e:
+        st.error(f"{e}")
 
-## Contribute
+elif pantalla == "CashFlow":
+    col1, col2 = st.columns(2)
+    mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
+    buscar = col2.text_input("Buscar")
+    where = []
+    if mes != "Todos": where.append(f"mes={mes}")
+    if buscar: where.append(f"detalle ILIKE '%{buscar}%'")
+    sql = "SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow"
+    if where: sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY fecha DESC LIMIT 500"
+    try:
+        df = query(sql)
+        st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+        st.metric("Total", f"${df['importe'].sum():,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
 
-🎉 Thanks for your interest in helping improve Streamlit! 🎉
-
-Before contributing, please read our guidelines here: https://github.com/streamlit/streamlit/blob/develop/CONTRIBUTING.md
-
-## License
-
-Streamlit is completely free and open-source and licensed under the [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) license.
+elif pantalla == "Balance":
+    mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
+    mes_num = None if mes == "Todos" else int(mes.split("-")[0])
+    try:
+        where_mes = f"AND EXTRACT(MONTH FROM c.fecha)={mes_num}" if mes_num else ""
+        df = query(f"""
+            SELECT p.niv2_desc Subtipo, p.nombre Cuenta, COALESCE(SUM(c.importe),0) Importe
+            FROM plan_de_cuentas p
+            LEFT JOIN cashflow c ON c.detalle=p.nombre {where_mes}
+            WHERE p.niv1=1
+            GROUP BY p.niv2_desc,p.nombre,p.niv1,p.niv2,p.niv3,p.niv4,p.niv5
+            HAVING COALESCE(SUM(c.importe),0)<>0
+            ORDER BY p.niv1,p.niv2,p.niv3,p.niv4,p.niv5
+        """)
+        if df.empty:
+            st.info("Sin datos.")
+        else:
+            for sub in df["Subtipo"].unique():
+                st.markdown(f"**{sub}**")
+                s = df[df["Subtipo"]==sub][["Cuenta","Importe"]]
+                st.dataframe(s, use_container_width=True, hide_index=True)
+                st.markdown(f"Total: **${s['Importe'].sum():,.2f}**")
+            st.metric("Resultado Neto", f"${df['Importe'].sum():,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
