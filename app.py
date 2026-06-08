@@ -236,6 +236,28 @@ elif pantalla == "Titulares":
         st.error(f"{e}")
 
 elif pantalla == "CashFlow":
+    # Resumen de saldos por fondo
+    st.subheader("Saldos por Fondo")
+    try:
+        saldos = query("""
+            SELECT id_fondo, COALESCE(SUM(importe),0) as saldo
+            FROM cashflow
+            WHERE id_fondo IS NOT NULL
+            GROUP BY id_fondo
+            ORDER BY id_fondo
+        """)
+        if not saldos.empty:
+            cols = st.columns(len(FONDOS))
+            for i, (nombre, id_f) in enumerate(FONDOS.items()):
+                fila = saldos[saldos['id_fondo'] == id_f]
+                saldo = float(fila['saldo'].iloc[0]) if not fila.empty else 0.0
+                cols[i].metric(nombre, f"${saldo:,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
+
+    st.markdown("---")
+
+    # Filtros
     col1, col2, col3 = st.columns(3)
     mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
     fondo_filtro = col2.selectbox("Fondo", ["Todos"] + list(FONDOS.keys()))
@@ -245,17 +267,18 @@ elif pantalla == "CashFlow":
     if mes != "Todos":
         where.append(f"mes={mes}")
     if fondo_filtro != "Todos":
-        where.append(f"id_fondo={FONDOS[fondo_filtro]}")
+        where.append(f"c.id_fondo={FONDOS[fondo_filtro]}")
 
     sql = """
         SELECT 
-            c.fecha,
-            COALESCE(t.nombre, c.id_titular::text) AS \"Titular\",
-            c.cod_cuenta AS \"Cuenta\",
-            c.detalle AS \"Detalle\",
-            c.importe AS \"Importe\"
+            c.fecha AS "Fecha",
+            COALESCE(t.nombre, c.id_titular::text) AS "Titular",
+            COALESCE(f.nombre, c.id_fondo::text) AS "Fondo",
+            c.detalle AS "Detalle",
+            c.importe AS "Importe"
         FROM cashflow c
         LEFT JOIN titulares t ON c.id_titular = t.id
+        LEFT JOIN (VALUES (1,'Efectivo $'),(2,'Efectivo Ale'),(3,'Santander'),(4,'Mercado Pago'),(5,'FCI'),(6,'Cheques')) AS f(id,nombre) ON c.id_fondo = f.id
     """
     if where:
         sql += " WHERE " + " AND ".join(where)
@@ -266,21 +289,17 @@ elif pantalla == "CashFlow":
         if df.empty:
             st.info("Sin movimientos.")
         else:
-            # Saldo acumulado por fondo seleccionado o global
             df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
-            if cronologico:
-                df['Saldo'] = df['Importe'].cumsum()
-            else:
-                df['Saldo'] = df['Importe'].cumsum()
-
+            if fondo_filtro != "Todos":
+                df_asc = df.iloc[::-1].copy() if not cronologico else df.copy()
+                df_asc['Saldo'] = df_asc['Importe'].cumsum()
+                df = df_asc.iloc[::-1].copy() if not cronologico else df_asc
             st.dataframe(df, use_container_width=True, hide_index=True, height=500)
-
             col1, col2 = st.columns(2)
-            col1.metric("Total movimientos", len(df))
-            col2.metric("Saldo" + (f" {fondo_filtro}" if fondo_filtro != "Todos" else ""), f"${df['Importe'].sum():,.2f}")
+            col1.metric("Movimientos", len(df))
+            col2.metric("Total periodo", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
-
 elif pantalla == "Balance":
     mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
     mes_num = None if mes == "Todos" else int(mes.split("-")[0])
