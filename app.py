@@ -44,7 +44,17 @@ def get_ultimos(limit=20):
 
 with st.sidebar:
     st.markdown("### CBC Sistema Contable")
-    pantalla = st.radio("Menu", ["Dashboard", "Cargar Movimiento", "Cargar Comprobante", "Gestion de Saldos", "Plan de Cuentas", "Titulares", "CashFlow", "Balance"])
+    pantalla = st.radio("Menu", [
+        "Dashboard",
+        "Cargar Movimiento",
+        "Cargar Comprobante",
+        "Gestion de Saldos",
+        "Cuenta Corriente",
+        "Plan de Cuentas",
+        "Titulares",
+        "CashFlow",
+        "Balance"
+    ])
     st.caption("Neon PostgreSQL")
 
 st.title("CBC Sistema Contable")
@@ -162,8 +172,10 @@ elif pantalla == "Gestion de Saldos":
     titulares = get_titulares()
     col1, col2 = st.columns(2)
     filtro_titular = col1.selectbox("Titular", ["Todos"] + list(titulares.keys()))
-    filtro_tipo = col2.selectbox("Tipo", ["Todos", "IMPAGO", "PAGO"])
-    where = ["o.id_pago IS NULL"] if filtro_tipo == "IMPAGO" else [] if filtro_tipo == "Todos" else ["o.id_pago IS NOT NULL"]
+    filtro_tipo = col2.selectbox("Estado", ["IMPAGO", "PAGO", "Todos"])
+    where = []
+    if filtro_tipo == "IMPAGO": where.append("o.id_pago IS NULL")
+    elif filtro_tipo == "PAGO": where.append("o.id_pago IS NOT NULL")
     if filtro_titular != "Todos":
         where.append(f"o.id_titular = '{titulares[filtro_titular]}'")
     sql = """
@@ -183,7 +195,39 @@ elif pantalla == "Gestion de Saldos":
             st.info("No hay comprobantes.")
         else:
             st.dataframe(df, use_container_width=True, hide_index=True, height=500)
-            st.metric("Total impago", f"${df['Importe'].sum():,.2f}")
+            st.metric("Total", f"${df['Importe'].sum():,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
+
+elif pantalla == "Cuenta Corriente":
+    st.subheader("Cuenta Corriente por Titular")
+    titulares = get_titulares()
+    titular = st.selectbox("Seleccionar titular", list(titulares.keys()))
+    id_titular = titulares[titular]
+    try:
+        df = query(f"""
+            SELECT
+                o.fecha,
+                tc.descripcion Tipo,
+                o.numero_comprobante Numero,
+                o.descripcion Concepto,
+                o.importe Debe,
+                CASE WHEN o.id_pago IS NOT NULL THEN o.importe ELSE 0 END Haber,
+                CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado
+            FROM operaciones o
+            LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id
+            WHERE o.id_titular = '{id_titular}'
+            ORDER BY o.fecha ASC
+        """)
+        if df.empty:
+            st.info(f"Sin movimientos para {titular}.")
+        else:
+            df['Saldo'] = (df['Debe'] - df['Haber']).cumsum()
+            st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Facturado", f"${df['Debe'].sum():,.2f}")
+            col2.metric("Total Pagado", f"${df['Haber'].sum():,.2f}")
+            col3.metric("Saldo Pendiente", f"${df['Saldo'].iloc[-1]:,.2f}")
     except Exception as e:
         st.error(f"{e}")
 
@@ -222,36 +266,4 @@ elif pantalla == "CashFlow":
     if buscar: where.append(f"detalle ILIKE '%{buscar}%'")
     sql = "SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow"
     if where: sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY fecha ASC LIMIT 500" if cronologico else " ORDER BY fecha DESC LIMIT 500"
-    try:
-        df = query(sql)
-        st.dataframe(df, use_container_width=True, hide_index=True, height=500)
-        st.metric("Total", f"${df['importe'].sum():,.2f}")
-    except Exception as e:
-        st.error(f"{e}")
-
-elif pantalla == "Balance":
-    mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
-    mes_num = None if mes == "Todos" else int(mes.split("-")[0])
-    try:
-        where_mes = f"AND EXTRACT(MONTH FROM c.fecha)={mes_num}" if mes_num else ""
-        df = query(f"""
-            SELECT p.niv2_desc Subtipo, p.nombre Cuenta, COALESCE(SUM(c.importe),0) Importe
-            FROM plan_de_cuentas p
-            LEFT JOIN cashflow c ON c.detalle=p.nombre {where_mes}
-            WHERE p.niv1=1
-            GROUP BY p.niv2_desc,p.nombre,p.niv1,p.niv2,p.niv3,p.niv4,p.niv5
-            HAVING COALESCE(SUM(c.importe),0)<>0
-            ORDER BY p.niv1,p.niv2,p.niv3,p.niv4,p.niv5
-        """)
-        if df.empty:
-            st.info("Sin datos.")
-        else:
-            for sub in df["Subtipo"].unique():
-                st.markdown(f"**{sub}**")
-                s = df[df["Subtipo"]==sub][["Cuenta","Importe"]]
-                st.dataframe(s, use_container_width=True, hide_index=True)
-                st.markdown(f"Total: **${s['Importe'].sum():,.2f}**")
-            st.metric("Resultado Neto", f"${df['Importe'].sum():,.2f}")
-    except Exception as e:
-        st.error(f"{e}")
+    sql += " OR
