@@ -34,7 +34,6 @@ def get_titulares():
     return dict(zip(df['nombre'], df['id']))
 
 def get_titulares_movimiento():
-    # Sin Titular aparece primero
     df = query("SELECT id, nombre FROM titulares WHERE nivel1 = 'SISTEMA' ORDER BY nombre")
     df2 = query("SELECT id, nombre FROM titulares WHERE nivel1 != 'SISTEMA' ORDER BY nombre")
     df_all = pd.concat([df, df2], ignore_index=True)
@@ -47,6 +46,9 @@ def get_tipos_comprobante():
 def get_fondos():
     df = query("SELECT id, nombre FROM fondos WHERE activo=true ORDER BY id")
     return dict(zip(df['nombre'], df['id']))
+
+def get_fondos_completo():
+    return query("SELECT id, nombre, tipo, saldo_inicial, permite_negativo FROM fondos WHERE activo=true ORDER BY id")
 
 def get_cuentas():
     df = query("SELECT nombre FROM plan_de_cuentas ORDER BY niv1,niv2,niv3,niv4,niv5")
@@ -116,15 +118,14 @@ if pantalla == "Dashboard":
         st.error(f"Error: {e}")
 
 elif pantalla == "Cargar Movimiento":
-    modo = st.radio("Modo", ["Formulario", "Pantalla completa"], horizontal=True)
     titulares = get_titulares_movimiento()
     fondos = get_fondos()
     fondos_completo = get_fondos_completo()
+    cuentas = get_cuentas()
 
     def guardar_movimiento(fecha, fondo_nombre, titular_nombre, concepto, importe, cuenta):
         id_fondo = fondos[fondo_nombre]
         id_titular = titulares[titular_nombre]
-        # Validar saldo negativo
         fila_fondo = fondos_completo[fondos_completo['id'] == id_fondo].iloc[0]
         if not fila_fondo['permite_negativo']:
             saldo_actual = get_saldo_fondo(id_fondo)
@@ -135,7 +136,9 @@ elif pantalla == "Cargar Movimiento":
                 (fecha.month, fecha, id_titular, cuenta, concepto, importe, id_fondo))
         return True
 
-   if modo == "Formulario":
+    modo = st.radio("Modo", ["Formulario", "Pantalla completa"], horizontal=True)
+
+    if modo == "Formulario":
         with st.form("form"):
             col1, col2 = st.columns(2)
             fecha = col1.date_input("Fecha", value=date.today())
@@ -144,7 +147,6 @@ elif pantalla == "Cargar Movimiento":
             concepto = st.text_input("Concepto")
             col3, col4 = st.columns(2)
             importe = col3.number_input("Importe (negativo=egreso)", value=0.0, step=100.0)
-            cuentas = get_cuentas()
             cuenta = col4.selectbox("Cuenta contable", cuentas)
             if st.form_submit_button("Guardar"):
                 if not concepto:
@@ -154,26 +156,25 @@ elif pantalla == "Cargar Movimiento":
                         st.success(f"Guardado: {concepto} | ${importe:,.2f}")
                         st.rerun()
 
-  else:
-            st.subheader("Saldos actuales")
-            mostrar_saldos_fondos()
-            st.markdown("---")
-            col_form, col_tabla = st.columns([1, 2])
-            with col_form:
-                fecha = st.date_input("Fecha", value=date.today(), key="f")
-                fondo = st.selectbox("Fondo", list(fondos.keys()), key="fo")
-                titular = st.selectbox("Titular", list(titulares.keys()), key="t")
-                concepto = st.text_input("Concepto", key="c")
-                importe = st.number_input("Importe (negativo=egreso)", value=0.0, step=100.0, key="i")
-                cuentas = get_cuentas()
-                cuenta = st.selectbox("Cuenta", cuentas, key="cu")
-                if st.button("Guardar", use_container_width=True):
-                    if not concepto:
-                        st.error("Falta concepto.")
-                    else:
-                        if guardar_movimiento(fecha, fondo, titular, concepto, importe, cuenta):
-                            st.success(f"OK: ${importe:,.2f}")
-                            st.rerun()
+    else:
+        st.subheader("Saldos actuales")
+        mostrar_saldos_fondos()
+        st.markdown("---")
+        col_form, col_tabla = st.columns([1, 2])
+        with col_form:
+            fecha = st.date_input("Fecha", value=date.today(), key="f")
+            fondo = st.selectbox("Fondo", list(fondos.keys()), key="fo")
+            titular = st.selectbox("Titular", list(titulares.keys()), key="t")
+            concepto = st.text_input("Concepto", key="c")
+            importe = st.number_input("Importe (negativo=egreso)", value=0.0, step=100.0, key="i")
+            cuenta = st.selectbox("Cuenta", cuentas, key="cu")
+            if st.button("Guardar", use_container_width=True):
+                if not concepto:
+                    st.error("Falta concepto.")
+                else:
+                    if guardar_movimiento(fecha, fondo, titular, concepto, importe, cuenta):
+                        st.success(f"OK: ${importe:,.2f}")
+                        st.rerun()
         with col_tabla:
             try:
                 st.dataframe(get_ultimos(15), use_container_width=True, hide_index=True, height=450)
