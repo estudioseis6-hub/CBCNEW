@@ -75,6 +75,15 @@ def get_saldo_fondo(id_fondo):
 def get_ultimos(limit=20):
     return query(f"SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
 
+def get_dolar_blue():
+    try:
+        import requests
+        r = requests.get("https://criptoya.com/api/dolar", timeout=5)
+        data = r.json()
+        return float(data['blue']['bid']), float(data['blue']['ask'])
+    except:
+        return None, None
+
 def mostrar_saldos_fondos():
     try:
         saldos = query("""
@@ -311,37 +320,72 @@ elif pantalla == "Titulares":
         st.error(f"{e}")
 
 elif pantalla == "Tesoreria":
+    compra_usd, venta_usd = get_dolar_blue()
+    cotizacion = compra_usd if compra_usd else 0
+
     try:
         saldos = query("""
-            SELECT f.id, f.nombre, f.tipo, f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
+            SELECT f.id, f.nombre, f.tipo, f.moneda, f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
             FROM fondos f
             LEFT JOIN cashflow c ON c.id_fondo = f.id
             WHERE f.activo = true
-            GROUP BY f.id, f.nombre, f.tipo, f.saldo_inicial
+            GROUP BY f.id, f.nombre, f.tipo, f.moneda, f.saldo_inicial
             ORDER BY f.id
         """)
+
         if not saldos.empty:
             tipos_libres = ['Efectivo', 'Banco', 'Billetera Digital']
-            total_libre = sum(
-                float(row['saldo_inicial']) + float(row['movimientos'])
-                for _, row in saldos.iterrows()
-                if row['tipo'] in tipos_libres
-            )
-            cols = st.columns(len(saldos) + 1)
+            total_libre_ars = 0
+
+            # Construir lista de columnas a mostrar
+            # Cada fondo ARS = 1 col, cada fondo USD = 2 cols, mas col cotizacion y total
+            header_cols = []
+            for _, row in saldos.iterrows():
+                header_cols.append(row['nombre'])
+                if row['moneda'] == 'USD':
+                    header_cols.append(f"{row['nombre']} (ARS)")
+
+            n_cols = len(header_cols) + 2  # + cotizacion + libre disponibilidad
+            cols = st.columns(n_cols)
+
+            col_idx = 0
             fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
-            for i, (_, row) in enumerate(saldos.iterrows()):
+
+            for _, row in saldos.iterrows():
                 saldo = float(row['saldo_inicial']) + float(row['movimientos'])
-                label = f"{row['nombre']}\n${saldo:,.2f}"
-                if cols[i].button(label, use_container_width=True, key=f"btn_fondo_{row['id']}"):
+                es_usd = row['moneda'] == 'USD'
+                saldo_ars = saldo * cotizacion if es_usd else saldo
+
+                if row['tipo'] in tipos_libres:
+                    total_libre_ars += saldo_ars
+
+                label = f"{row['nombre']}\n{'$'+f'{saldo:,.2f}' if not es_usd else f'U$S {saldo:,.2f}'}"
+                if cols[col_idx].button(label, use_container_width=True, key=f"btn_fondo_{row['id']}"):
                     if fondo_seleccionado == row['nombre']:
                         st.session_state['fondo_cf'] = 'Todos'
                     else:
                         st.session_state['fondo_cf'] = row['nombre']
                     st.rerun()
-            cols[-1].metric("Libre disponibilidad", f"${total_libre:,.2f}")
+                col_idx += 1
+
+                if es_usd:
+                    cols[col_idx].metric(f"≈ ARS", f"${saldo_ars:,.2f}")
+                    col_idx += 1
+
+            # Cotizacion blue
+            if compra_usd:
+                cols[col_idx].metric("USD Blue", f"${compra_usd:,.2f}")
+            else:
+                cols[col_idx].metric("USD Blue", "N/D")
+            col_idx += 1
+
+            # Total libre disponibilidad
+            cols[col_idx].metric("Libre disponibilidad", f"${total_libre_ars:,.2f}")
+
             fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
             if fondo_seleccionado != 'Todos':
                 st.info(f"Filtrando: {fondo_seleccionado} — click de nuevo para ver todos")
+
     except Exception as e:
         st.error(f"{e}")
 
