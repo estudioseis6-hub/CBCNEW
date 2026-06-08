@@ -114,14 +114,14 @@ titulos = {
     "Dashboard": "Dashboard",
     "Cargar Movimiento": "Cargar Movimiento",
     "Cargar Comprobante": "Cargar Comprobante",
-    "Gestion de Saldos": "Gestión de Saldos",
+    "Gestion de Saldos": "Gestion de Saldos",
     "Cuenta Corriente": "Cuenta Corriente",
     "Plan de Cuentas": "Plan de Cuentas",
     "Titulares": "Titulares",
-    "Tesorería": "Tesorería",
+    "Tesoreria": "Tesoreria",
     "Balance": "Balance",
-    "── Config ──": "Configuración",
-    "Fondos": "Configuración — Fondos",
+    "── Config ──": "Configuracion",
+    "Fondos": "Configuracion — Fondos",
 }
 st.title(titulos.get(pantalla, "CBC"))
 
@@ -310,10 +310,7 @@ elif pantalla == "Titulares":
     except Exception as e:
         st.error(f"{e}")
 
-elif pantalla == "Tesorería":
-    st.subheader("Saldos por Fondo")
-
-    # Saldos por fondo con click para filtrar
+elif pantalla == "Tesoreria":
     try:
         saldos = query("""
             SELECT f.id, f.nombre, f.tipo, f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
@@ -323,20 +320,15 @@ elif pantalla == "Tesorería":
             GROUP BY f.id, f.nombre, f.tipo, f.saldo_inicial
             ORDER BY f.id
         """)
-
         if not saldos.empty:
-            # Total libre disponibilidad
             tipos_libres = ['Efectivo', 'Banco', 'Billetera Digital']
             total_libre = sum(
                 float(row['saldo_inicial']) + float(row['movimientos'])
                 for _, row in saldos.iterrows()
                 if row['tipo'] in tipos_libres
             )
-
-            # Mostrar fondos como botones
             cols = st.columns(len(saldos) + 1)
             fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
-
             for i, (_, row) in enumerate(saldos.iterrows()):
                 saldo = float(row['saldo_inicial']) + float(row['movimientos'])
                 label = f"{row['nombre']}\n${saldo:,.2f}"
@@ -346,26 +338,19 @@ elif pantalla == "Tesorería":
                     else:
                         st.session_state['fondo_cf'] = row['nombre']
                     st.rerun()
-
-            # Total libre disponibilidad al final
-            cols[-1].metric("💰 Libre disponibilidad", f"${total_libre:,.2f}")
-
+            cols[-1].metric("Libre disponibilidad", f"${total_libre:,.2f}")
             fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
             if fondo_seleccionado != 'Todos':
-                st.info(f"Filtrando: {fondo_seleccionado} — hacé click de nuevo para ver todos")
-
+                st.info(f"Filtrando: {fondo_seleccionado} — click de nuevo para ver todos")
     except Exception as e:
         st.error(f"{e}")
 
     st.markdown("---")
-
     fondos = get_fondos()
     col1, col2 = st.columns(2)
     mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
     cronologico = col2.checkbox("Orden cronologico (mas antiguo primero)")
-
     fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
-
     where = []
     if mes != "Todos":
         where.append(f"c.mes={mes}")
@@ -373,7 +358,6 @@ elif pantalla == "Tesorería":
         id_fondo_sel = fondos.get(fondo_seleccionado)
         if id_fondo_sel:
             where.append(f"c.id_fondo={id_fondo_sel}")
-
     sql = """
         SELECT
             c.fecha AS "Fecha",
@@ -388,7 +372,6 @@ elif pantalla == "Tesorería":
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY c.fecha " + ("ASC" if cronologico else "DESC") + " LIMIT 500"
-
     try:
         df = query(sql)
         if df.empty:
@@ -405,6 +388,7 @@ elif pantalla == "Tesorería":
             col2.metric("Total periodo", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
+
 elif pantalla == "Balance":
     mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
     mes_num = None if mes == "Todos" else int(mes.split("-")[0])
@@ -424,11 +408,11 @@ elif pantalla == "Balance":
         st.error(f"{e}")
 
 elif pantalla == "── Config ──":
-    st.info("Seleccioná una opción de configuración del menu.")
+    st.info("Selecciona una opcion de configuracion del menu.")
 
 elif pantalla == "Fondos":
     st.subheader("Configuracion de Fondos")
-    TIPOS_FONDO = ["Efectivo", "Banco", "Billetera Digital", "Cheques", "Inversión"]
+    TIPOS_FONDO = ["Efectivo", "Banco", "Billetera Digital", "Cheques", "Inversion"]
     MONEDAS = ["ARS", "USD", "EUR"]
 
     try:
@@ -465,7 +449,7 @@ elif pantalla == "Fondos":
             df_fondos = query("SELECT id, nombre, es_sistema FROM fondos ORDER BY id")
             df_usuario = df_fondos[df_fondos['es_sistema'] == False]
             if df_usuario.empty:
-                st.info("No tenés fondos propios agregados todavía.")
+                st.info("No tenes fondos propios agregados todavia.")
             else:
                 fondo_sel = st.selectbox("Fondo", df_usuario['nombre'].tolist())
                 id_sel = int(df_usuario[df_usuario['nombre'] == fondo_sel]['id'].iloc[0])
