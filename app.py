@@ -299,18 +299,68 @@ elif pantalla == "Titulares":
 
 elif pantalla == "CashFlow":
     st.subheader("Saldos por Fondo")
-    mostrar_saldos_fondos()
+
+    # Saldos por fondo con click para filtrar
+    try:
+        saldos = query("""
+            SELECT f.id, f.nombre, f.tipo, f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
+            FROM fondos f
+            LEFT JOIN cashflow c ON c.id_fondo = f.id
+            WHERE f.activo = true
+            GROUP BY f.id, f.nombre, f.tipo, f.saldo_inicial
+            ORDER BY f.id
+        """)
+
+        if not saldos.empty:
+            # Total libre disponibilidad
+            tipos_libres = ['Efectivo', 'Banco', 'Billetera Digital']
+            total_libre = sum(
+                float(row['saldo_inicial']) + float(row['movimientos'])
+                for _, row in saldos.iterrows()
+                if row['tipo'] in tipos_libres
+            )
+
+            # Mostrar fondos como botones
+            cols = st.columns(len(saldos) + 1)
+            fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
+
+            for i, (_, row) in enumerate(saldos.iterrows()):
+                saldo = float(row['saldo_inicial']) + float(row['movimientos'])
+                label = f"{row['nombre']}\n${saldo:,.2f}"
+                if cols[i].button(label, use_container_width=True, key=f"btn_fondo_{row['id']}"):
+                    if fondo_seleccionado == row['nombre']:
+                        st.session_state['fondo_cf'] = 'Todos'
+                    else:
+                        st.session_state['fondo_cf'] = row['nombre']
+                    st.rerun()
+
+            # Total libre disponibilidad al final
+            cols[-1].metric("💰 Libre disponibilidad", f"${total_libre:,.2f}")
+
+            fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
+            if fondo_seleccionado != 'Todos':
+                st.info(f"Filtrando: {fondo_seleccionado} — hacé click de nuevo para ver todos")
+
+    except Exception as e:
+        st.error(f"{e}")
+
     st.markdown("---")
+
     fondos = get_fondos()
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
-    fondo_filtro = col2.selectbox("Fondo", ["Todos"] + list(fondos.keys()))
-    cronologico = col3.checkbox("Orden cronologico (mas antiguo primero)")
+    cronologico = col2.checkbox("Orden cronologico (mas antiguo primero)")
+
+    fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
+
     where = []
     if mes != "Todos":
         where.append(f"c.mes={mes}")
-    if fondo_filtro != "Todos":
-        where.append(f"c.id_fondo={fondos[fondo_filtro]}")
+    if fondo_seleccionado != 'Todos':
+        id_fondo_sel = fondos.get(fondo_seleccionado)
+        if id_fondo_sel:
+            where.append(f"c.id_fondo={id_fondo_sel}")
+
     sql = """
         SELECT
             c.fecha AS "Fecha",
@@ -325,13 +375,14 @@ elif pantalla == "CashFlow":
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY c.fecha " + ("ASC" if cronologico else "DESC") + " LIMIT 500"
+
     try:
         df = query(sql)
         if df.empty:
             st.info("Sin movimientos.")
         else:
             df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
-            if fondo_filtro != "Todos":
+            if fondo_seleccionado != 'Todos':
                 df_asc = df.iloc[::-1].copy() if not cronologico else df.copy()
                 df_asc['Saldo'] = df_asc['Importe'].cumsum()
                 df = df_asc.iloc[::-1].copy() if not cronologico else df_asc
@@ -341,7 +392,6 @@ elif pantalla == "CashFlow":
             col2.metric("Total periodo", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
-
 elif pantalla == "Balance":
     mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
     mes_num = None if mes == "Todos" else int(mes.split("-")[0])
