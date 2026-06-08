@@ -103,7 +103,7 @@ with st.sidebar:
         "Cuenta Corriente",
         "Plan de Cuentas",
         "Titulares",
-        "CashFlow",
+        "Tesoreria",
         "Balance",
         "── Config ──",
         "Fondos",
@@ -118,7 +118,7 @@ titulos = {
     "Cuenta Corriente": "Cuenta Corriente",
     "Plan de Cuentas": "Plan de Cuentas",
     "Titulares": "Titulares",
-    "CashFlow": "Tesorería",
+    "Tesorería": "Tesorería",
     "Balance": "Balance",
     "── Config ──": "Configuración",
     "Fondos": "Configuración — Fondos",
@@ -310,7 +310,7 @@ elif pantalla == "Titulares":
     except Exception as e:
         st.error(f"{e}")
 
-elif pantalla == "CashFlow":
+elif pantalla == "Tesorería":
     st.subheader("Saldos por Fondo")
 
     # Saldos por fondo con click para filtrar
