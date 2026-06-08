@@ -47,17 +47,18 @@ def get_ultimos(limit=20):
 def mostrar_saldos_fondos():
     try:
         saldos = query("""
-            SELECT f.id, f.nombre, COALESCE(SUM(c.importe),0) as saldo
+            SELECT f.id, f.nombre, f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
             FROM fondos f
             LEFT JOIN cashflow c ON c.id_fondo = f.id
             WHERE f.activo = true
-            GROUP BY f.id, f.nombre
+            GROUP BY f.id, f.nombre, f.saldo_inicial
             ORDER BY f.id
         """)
         if not saldos.empty:
             cols = st.columns(len(saldos))
             for i, row in saldos.iterrows():
-                cols[i].metric(row['nombre'], f"${float(row['saldo']):,.2f}")
+                saldo = float(row['saldo_inicial']) + float(row['movimientos'])
+                cols[i].metric(row['nombre'], f"${saldo:,.2f}")
     except Exception as e:
         st.error(f"{e}")
 
