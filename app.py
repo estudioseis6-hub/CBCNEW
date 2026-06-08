@@ -32,7 +32,7 @@ def execute(sql, params=None):
 def fmt_fecha(df):
     for col in ['fecha', 'Fecha']:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col]).dt.strftime('%d/%m/%Y')
+            df[col] = pd.to_datetime(df[col]).dt.strftime('%a %d %b %Y').str.title()
     return df
 
 def get_titulares():
