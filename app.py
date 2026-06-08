@@ -329,9 +329,8 @@ elif pantalla == "Fondos":
     TIPOS_FONDO = ["Efectivo", "Banco", "Billetera Digital", "Cheques", "Inversión"]
     MONEDAS = ["ARS", "USD", "EUR"]
 
-    # Tabla actual
     try:
-        df = query("SELECT id, nombre, tipo, moneda, activo FROM fondos ORDER BY id")
+        df = query("SELECT id, nombre, tipo, moneda, saldo_inicial, activo FROM fondos ORDER BY id")
         st.dataframe(df, use_container_width=True, hide_index=True)
     except Exception as e:
         st.error(f"{e}")
@@ -345,12 +344,14 @@ elif pantalla == "Fondos":
             nombre = st.text_input("Nombre")
             tipo = st.selectbox("Tipo", TIPOS_FONDO)
             moneda = st.selectbox("Moneda", MONEDAS)
+            saldo_inicial = st.number_input("Saldo inicial", value=0.0, step=100.0)
             if st.form_submit_button("Agregar"):
                 if not nombre:
                     st.error("Falta el nombre.")
                 else:
                     try:
-                        execute("INSERT INTO fondos (nombre, tipo, moneda) VALUES (%s, %s, %s)", (nombre, tipo, moneda))
+                        execute("INSERT INTO fondos (nombre, tipo, moneda, saldo_inicial) VALUES (%s, %s, %s, %s)",
+                                (nombre, tipo, moneda, saldo_inicial))
                         st.success(f"Fondo '{nombre}' agregado.")
                         st.rerun()
                     except Exception as e:
@@ -366,10 +367,11 @@ elif pantalla == "Fondos":
             nuevo_nombre = st.text_input("Nuevo nombre", value=fila['nombre'])
             nuevo_tipo = st.selectbox("Tipo", TIPOS_FONDO, index=TIPOS_FONDO.index(fila['tipo']) if fila['tipo'] in TIPOS_FONDO else 0)
             nueva_moneda = st.selectbox("Moneda", MONEDAS, index=MONEDAS.index(fila['moneda']) if fila['moneda'] in MONEDAS else 0)
+            nuevo_saldo_inicial = st.number_input("Saldo inicial", value=float(fila['saldo_inicial']), step=100.0)
             activo = st.checkbox("Activo", value=bool(fila['activo']))
             if st.button("Guardar cambios"):
-                execute("UPDATE fondos SET nombre=%s, tipo=%s, moneda=%s, activo=%s WHERE id=%s",
-                        (nuevo_nombre, nuevo_tipo, nueva_moneda, activo, id_sel))
+                execute("UPDATE fondos SET nombre=%s, tipo=%s, moneda=%s, saldo_inicial=%s, activo=%s WHERE id=%s",
+                        (nuevo_nombre, nuevo_tipo, nueva_moneda, nuevo_saldo_inicial, activo, id_sel))
                 st.success("Actualizado.")
                 st.rerun()
         except Exception as e:
