@@ -29,6 +29,12 @@ def execute(sql, params=None):
     finally:
         conn.close()
 
+def fmt_fecha(df):
+    for col in ['fecha', 'Fecha']:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col]).dt.strftime('%d/%m/%Y')
+    return df
+
 def get_titulares():
     df = query("SELECT id, nombre FROM titulares ORDER BY nombre")
     return dict(zip(df['nombre'], df['id']))
@@ -113,7 +119,7 @@ if pantalla == "Dashboard":
         c2.metric("Titulares", query("SELECT COUNT(*) as n FROM titulares").iloc[0]['n'])
         c3.metric("Movimientos", query("SELECT COUNT(*) as n FROM cashflow").iloc[0]['n'])
         c4.metric("Comprobantes", query("SELECT COUNT(*) as n FROM operaciones").iloc[0]['n'])
-        st.dataframe(get_ultimos(10), use_container_width=True, hide_index=True)
+        st.dataframe(fmt_fecha(get_ultimos(10)), use_container_width=True, hide_index=True)
     except Exception as e:
         st.error(f"Error: {e}")
 
@@ -177,7 +183,7 @@ elif pantalla == "Cargar Movimiento":
                         st.rerun()
         with col_tabla:
             try:
-                st.dataframe(get_ultimos(15), use_container_width=True, hide_index=True, height=450)
+                st.dataframe(fmt_fecha(get_ultimos(15)), use_container_width=True, hide_index=True, height=450)
             except Exception as e:
                 st.error(f"{e}")
 
@@ -209,7 +215,7 @@ elif pantalla == "Cargar Comprobante":
     st.subheader("Ultimos comprobantes")
     try:
         df = query("SELECT o.fecha, t.nombre Titular, tc.descripcion Tipo, o.numero_comprobante Numero, o.descripcion Concepto, o.importe Importe, CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado FROM operaciones o LEFT JOIN titulares t ON o.id_titular = t.id LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id ORDER BY o.fecha DESC LIMIT 50")
-        st.dataframe(df, use_container_width=True, hide_index=True, height=400)
+        st.dataframe(fmt_fecha(df), use_container_width=True, hide_index=True, height=400)
     except Exception as e:
         st.error(f"{e}")
 
@@ -236,7 +242,7 @@ elif pantalla == "Gestion de Saldos":
         if df.empty:
             st.info("No hay comprobantes.")
         else:
-            st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+            st.dataframe(fmt_fecha(df), use_container_width=True, hide_index=True, height=500)
             st.metric("Total", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
@@ -254,7 +260,7 @@ elif pantalla == "Cuenta Corriente":
             df['Debe'] = pd.to_numeric(df['Debe'], errors='coerce').fillna(0)
             df['Haber'] = pd.to_numeric(df['Haber'], errors='coerce').fillna(0)
             df['Saldo'] = (df['Debe'] - df['Haber']).cumsum()
-            st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+            st.dataframe(fmt_fecha(df), use_container_width=True, hide_index=True, height=500)
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Facturado", f"${df['Debe'].sum():,.2f}")
             col2.metric("Total Pagado", f"${df['Haber'].sum():,.2f}")
@@ -306,7 +312,7 @@ elif pantalla == "CashFlow":
     if fondo_filtro != "Todos":
         where.append(f"c.id_fondo={fondos[fondo_filtro]}")
     sql = """
-        SELECT 
+        SELECT
             c.fecha AS "Fecha",
             COALESCE(t.nombre, c.id_titular::text) AS "Titular",
             f.nombre AS "Fondo",
@@ -329,7 +335,7 @@ elif pantalla == "CashFlow":
                 df_asc = df.iloc[::-1].copy() if not cronologico else df.copy()
                 df_asc['Saldo'] = df_asc['Importe'].cumsum()
                 df = df_asc.iloc[::-1].copy() if not cronologico else df_asc
-            st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+            st.dataframe(fmt_fecha(df), use_container_width=True, hide_index=True, height=500)
             col1, col2 = st.columns(2)
             col1.metric("Movimientos", len(df))
             col2.metric("Total periodo", f"${df['Importe'].sum():,.2f}")
