@@ -43,6 +43,22 @@ def get_tipos_comprobante():
 def get_ultimos(limit=20):
     return query(f"SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
 
+def mostrar_saldos_fondos():
+    try:
+        saldos = query("""
+            SELECT id_fondo, COALESCE(SUM(importe),0) as saldo
+            FROM cashflow
+            WHERE id_fondo IS NOT NULL
+            GROUP BY id_fondo
+        """)
+        cols = st.columns(len(FONDOS))
+        for i, (nombre, id_f) in enumerate(FONDOS.items()):
+            fila = saldos[saldos['id_fondo'] == id_f] if not saldos.empty else pd.DataFrame()
+            saldo = float(fila['saldo'].iloc[0]) if not fila.empty else 0.0
+            cols[i].metric(nombre, f"${saldo:,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
+
 with st.sidebar:
     st.markdown("### CBC Sistema Contable")
     pantalla = st.radio("Menu", [
@@ -74,6 +90,7 @@ if pantalla == "Dashboard":
 elif pantalla == "Cargar Movimiento":
     modo = st.radio("Modo", ["Formulario", "Pantalla completa"], horizontal=True)
     titulares = get_titulares()
+
     if modo == "Formulario":
         with st.form("form"):
             col1, col2 = st.columns(2)
@@ -89,33 +106,34 @@ elif pantalla == "Cargar Movimiento":
                     st.error("Falta el concepto.")
                 else:
                     try:
-                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
+                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
                         st.success(f"Guardado: {concepto} | ${importe:,.2f}")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
+
     else:
-        try:
-            total = float(query("SELECT COALESCE(SUM(importe),0) as t FROM cashflow").iloc[0]['t'])
-            c1,c2 = st.columns(2)
-            c1.metric("Total", f"${total:,.2f}")
-            c2.metric("Movimientos", query("SELECT COUNT(*) as n FROM cashflow").iloc[0]['n'])
-        except Exception as e:
-            st.warning(f"{e}")
+        # Saldos actuales arriba
+        st.subheader("Saldos actuales")
+        mostrar_saldos_fondos()
+        st.markdown("---")
+
         col_form, col_tabla = st.columns([1, 2])
         with col_form:
             fecha = st.date_input("Fecha", value=date.today(), key="f")
             fondo = st.selectbox("Fondo", list(FONDOS.keys()), key="fo")
             titular = st.selectbox("Titular", list(titulares.keys()), key="t")
             concepto = st.text_input("Concepto", key="c")
-            importe = st.number_input("Importe", value=0.0, step=100.0, key="i")
+            importe = st.number_input("Importe (negativo=egreso)", value=0.0, step=100.0, key="i")
             cuenta = st.text_input("Cuenta", key="cu")
             if st.button("Guardar", use_container_width=True):
                 if not concepto:
                     st.error("Falta concepto.")
                 else:
                     try:
-                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
+                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
                         st.success(f"OK: ${importe:,.2f}")
                         st.rerun()
                     except Exception as e:
@@ -144,7 +162,8 @@ elif pantalla == "Cargar Comprobante":
                 st.error("Falta la descripcion.")
             else:
                 try:
-                    execute("INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes) VALUES (%s, %s, %s, %s, %s, %s, %s)", (fecha, titulares[titular], tipos[tipo], nro, descripcion, importe, fecha.month))
+                    execute("INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                            (fecha, titulares[titular], tipos[tipo], nro, descripcion, importe, fecha.month))
                     st.success(f"Comprobante guardado: {descripcion} | ${importe:,.2f}")
                     st.rerun()
                 except Exception as e:
@@ -236,25 +255,9 @@ elif pantalla == "Titulares":
         st.error(f"{e}")
 
 elif pantalla == "CashFlow":
-    # Resumen de saldos por fondo
+    # Saldos por fondo siempre visibles arriba
     st.subheader("Saldos por Fondo")
-    try:
-        saldos = query("""
-            SELECT id_fondo, COALESCE(SUM(importe),0) as saldo
-            FROM cashflow
-            WHERE id_fondo IS NOT NULL
-            GROUP BY id_fondo
-            ORDER BY id_fondo
-        """)
-        if not saldos.empty:
-            cols = st.columns(len(FONDOS))
-            for i, (nombre, id_f) in enumerate(FONDOS.items()):
-                fila = saldos[saldos['id_fondo'] == id_f]
-                saldo = float(fila['saldo'].iloc[0]) if not fila.empty else 0.0
-                cols[i].metric(nombre, f"${saldo:,.2f}")
-    except Exception as e:
-        st.error(f"{e}")
-
+    mostrar_saldos_fondos()
     st.markdown("---")
 
     # Filtros
@@ -265,7 +268,7 @@ elif pantalla == "CashFlow":
 
     where = []
     if mes != "Todos":
-        where.append(f"mes={mes}")
+        where.append(f"c.mes={mes}")
     if fondo_filtro != "Todos":
         where.append(f"c.id_fondo={FONDOS[fondo_filtro]}")
 
@@ -273,7 +276,7 @@ elif pantalla == "CashFlow":
         SELECT 
             c.fecha AS "Fecha",
             COALESCE(t.nombre, c.id_titular::text) AS "Titular",
-            COALESCE(f.nombre, c.id_fondo::text) AS "Fondo",
+            f.nombre AS "Fondo",
             c.detalle AS "Detalle",
             c.importe AS "Importe"
         FROM cashflow c
@@ -300,6 +303,7 @@ elif pantalla == "CashFlow":
             col2.metric("Total periodo", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
+
 elif pantalla == "Balance":
     mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
     mes_num = None if mes == "Todos" else int(mes.split("-")[0])
