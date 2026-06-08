@@ -190,10 +190,12 @@ elif pantalla == "Cuenta Corriente":
     titular = st.selectbox("Seleccionar titular", list(titulares.keys()))
     id_titular = titulares[titular]
     try:
-        df = query(f"SELECT o.fecha, tc.descripcion Tipo, o.numero_comprobante Numero, o.descripcion Concepto, o.importe Debe, CASE WHEN o.id_pago IS NOT NULL THEN o.importe ELSE 0 END Haber, CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado FROM operaciones o LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id WHERE o.id_titular = '{id_titular}' ORDER BY o.fecha ASC")
+        df = query(f"SELECT o.fecha, tc.descripcion Tipo, o.numero_comprobante Numero, o.descripcion Concepto, o.importe::float Debe, CASE WHEN o.id_pago IS NOT NULL THEN o.importe::float ELSE 0 END Haber, CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado FROM operaciones o LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id WHERE o.id_titular = '{id_titular}' ORDER BY o.fecha ASC")
         if df.empty:
             st.info(f"Sin movimientos para {titular}.")
         else:
+            df['Debe'] = pd.to_numeric(df['Debe'], errors='coerce').fillna(0)
+            df['Haber'] = pd.to_numeric(df['Haber'], errors='coerce').fillna(0)
             df['Saldo'] = (df['Debe'] - df['Haber']).cumsum()
             st.dataframe(df, use_container_width=True, hide_index=True, height=500)
             col1, col2, col3 = st.columns(3)
