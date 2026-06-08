@@ -316,7 +316,7 @@ elif pantalla == "Balance":
                 st.markdown(f"**{sub}**")
                 s = df[df["Subtipo"]==sub][["Cuenta","Importe"]]
                 st.dataframe(s, use_container_width=True, hide_index=True)
-                st.markdown(f"Total: **${s['Importe'].sum():,.2f}**")
+                st.markdown( f"Total: **${s['Importe'].sum():,.2f}**")
             st.metric("Resultado Neto", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
@@ -330,7 +330,7 @@ elif pantalla == "Fondos":
     MONEDAS = ["ARS", "USD", "EUR"]
 
     try:
-        df = query("SELECT id, nombre, tipo, moneda, saldo_inicial, activo FROM fondos ORDER BY id")
+        df = query("SELECT id, nombre, tipo, moneda, saldo_inicial, activo, es_sistema FROM fondos ORDER BY id")
         st.dataframe(df, use_container_width=True, hide_index=True)
     except Exception as e:
         st.error(f"{e}")
@@ -350,7 +350,7 @@ elif pantalla == "Fondos":
                     st.error("Falta el nombre.")
                 else:
                     try:
-                        execute("INSERT INTO fondos (nombre, tipo, moneda, saldo_inicial) VALUES (%s, %s, %s, %s)",
+                        execute("INSERT INTO fondos (nombre, tipo, moneda, saldo_inicial, es_sistema) VALUES (%s, %s, %s, %s, false)",
                                 (nombre, tipo, moneda, saldo_inicial))
                         st.success(f"Fondo '{nombre}' agregado.")
                         st.rerun()
@@ -358,21 +358,40 @@ elif pantalla == "Fondos":
                         st.error(f"{e}")
 
     with col2:
-        st.markdown("**Editar / desactivar fondo**")
+        st.markdown("**Editar fondo propio / desactivar**")
         try:
-            df_fondos = query("SELECT id, nombre FROM fondos ORDER BY id")
-            fondo_sel = st.selectbox("Fondo", df_fondos['nombre'].tolist())
-            id_sel = int(df_fondos[df_fondos['nombre'] == fondo_sel]['id'].iloc[0])
-            fila = query(f"SELECT * FROM fondos WHERE id={id_sel}").iloc[0]
-            nuevo_nombre = st.text_input("Nuevo nombre", value=fila['nombre'])
-            nuevo_tipo = st.selectbox("Tipo", TIPOS_FONDO, index=TIPOS_FONDO.index(fila['tipo']) if fila['tipo'] in TIPOS_FONDO else 0)
-            nueva_moneda = st.selectbox("Moneda", MONEDAS, index=MONEDAS.index(fila['moneda']) if fila['moneda'] in MONEDAS else 0)
-            nuevo_saldo_inicial = st.number_input("Saldo inicial", value=float(fila['saldo_inicial']), step=100.0)
-            activo = st.checkbox("Activo", value=bool(fila['activo']))
-            if st.button("Guardar cambios"):
-                execute("UPDATE fondos SET nombre=%s, tipo=%s, moneda=%s, saldo_inicial=%s, activo=%s WHERE id=%s",
-                        (nuevo_nombre, nuevo_tipo, nueva_moneda, nuevo_saldo_inicial, activo, id_sel))
-                st.success("Actualizado.")
-                st.rerun()
+            df_fondos = query("SELECT id, nombre, es_sistema FROM fondos ORDER BY id")
+            df_usuario = df_fondos[df_fondos['es_sistema'] == False]
+            if df_usuario.empty:
+                st.info("No tenés fondos propios agregados todavía.")
+            else:
+                fondo_sel = st.selectbox("Fondo", df_usuario['nombre'].tolist())
+                id_sel = int(df_usuario[df_usuario['nombre'] == fondo_sel]['id'].iloc[0])
+                fila = query(f"SELECT * FROM fondos WHERE id={id_sel}").iloc[0]
+                nuevo_nombre = st.text_input("Nuevo nombre", value=fila['nombre'])
+                nuevo_tipo = st.selectbox("Tipo", TIPOS_FONDO, index=TIPOS_FONDO.index(fila['tipo']) if fila['tipo'] in TIPOS_FONDO else 0)
+                nueva_moneda = st.selectbox("Moneda", MONEDAS, index=MONEDAS.index(fila['moneda']) if fila['moneda'] in MONEDAS else 0)
+                nuevo_saldo_inicial = st.number_input("Saldo inicial", value=float(fila['saldo_inicial']), step=100.0)
+                activo = st.checkbox("Activo", value=bool(fila['activo']))
+                if st.button("Guardar cambios"):
+                    execute("UPDATE fondos SET nombre=%s, tipo=%s, moneda=%s, saldo_inicial=%s, activo=%s WHERE id=%s",
+                            (nuevo_nombre, nuevo_tipo, nueva_moneda, nuevo_saldo_inicial, activo, id_sel))
+                    st.success("Actualizado.")
+                    st.rerun()
         except Exception as e:
             st.error(f"{e}")
+
+    st.markdown("---")
+    st.markdown("**Configurar saldo inicial de fondos del sistema**")
+    try:
+        df_sistema = query("SELECT id, nombre, saldo_inicial FROM fondos WHERE es_sistema = true ORDER BY id")
+        fondo_sis = st.selectbox("Fondo del sistema", df_sistema['nombre'].tolist(), key="sis")
+        id_sis = int(df_sistema[df_sistema['nombre'] == fondo_sis]['id'].iloc[0])
+        saldo_actual = float(df_sistema[df_sistema['id'] == id_sis]['saldo_inicial'].iloc[0])
+        nuevo_saldo = st.number_input("Saldo inicial", value=saldo_actual, step=100.0, key="saldo_sis")
+        if st.button("Guardar saldo inicial"):
+            execute("UPDATE fondos SET saldo_inicial=%s WHERE id=%s", (nuevo_saldo, id_sis))
+            st.success("Saldo inicial actualizado.")
+            st.rerun()
+    except Exception as e:
+        st.error(f"{e}")
