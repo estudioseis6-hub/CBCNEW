@@ -8,9 +8,6 @@ st.set_page_config(page_title="CBC", page_icon="📊", layout="wide")
 
 DB = "postgresql://neondb_owner:npg_0QazKFN8logm@ep-sweet-block-aq1035ng-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require"
 
-FONDOS = {"1 - Efectivo $": 1, "2 - Efectivo Ale": 2, "3 - Santander": 3, "4 - Mercado Pago": 4, "5 - FCI": 5, "6 - Cheques": 6}
-FONDOS_INV = {v: k for k, v in FONDOS.items()}
-
 def get_conn():
     return psycopg2.connect(DB, cursor_factory=RealDictCursor)
 
@@ -40,22 +37,27 @@ def get_tipos_comprobante():
     df = query("SELECT id, descripcion FROM tipos_comprobante WHERE activo=true ORDER BY id")
     return dict(zip(df['descripcion'], df['id']))
 
+def get_fondos():
+    df = query("SELECT id, nombre FROM fondos WHERE activo=true ORDER BY id")
+    return dict(zip(df['nombre'], df['id']))
+
 def get_ultimos(limit=20):
     return query(f"SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
 
 def mostrar_saldos_fondos():
     try:
         saldos = query("""
-            SELECT id_fondo, COALESCE(SUM(importe),0) as saldo
-            FROM cashflow
-            WHERE id_fondo IS NOT NULL
-            GROUP BY id_fondo
+            SELECT f.id, f.nombre, COALESCE(SUM(c.importe),0) as saldo
+            FROM fondos f
+            LEFT JOIN cashflow c ON c.id_fondo = f.id
+            WHERE f.activo = true
+            GROUP BY f.id, f.nombre
+            ORDER BY f.id
         """)
-        cols = st.columns(len(FONDOS))
-        for i, (nombre, id_f) in enumerate(FONDOS.items()):
-            fila = saldos[saldos['id_fondo'] == id_f] if not saldos.empty else pd.DataFrame()
-            saldo = float(fila['saldo'].iloc[0]) if not fila.empty else 0.0
-            cols[i].metric(nombre, f"${saldo:,.2f}")
+        if not saldos.empty:
+            cols = st.columns(len(saldos))
+            for i, row in saldos.iterrows():
+                cols[i].metric(row['nombre'], f"${float(row['saldo']):,.2f}")
     except Exception as e:
         st.error(f"{e}")
 
@@ -70,7 +72,9 @@ with st.sidebar:
         "Plan de Cuentas",
         "Titulares",
         "CashFlow",
-        "Balance"
+        "Balance",
+        "── Config ──",
+        "Fondos",
     ])
     st.caption("Neon PostgreSQL")
 
@@ -90,12 +94,13 @@ if pantalla == "Dashboard":
 elif pantalla == "Cargar Movimiento":
     modo = st.radio("Modo", ["Formulario", "Pantalla completa"], horizontal=True)
     titulares = get_titulares()
+    fondos = get_fondos()
 
     if modo == "Formulario":
         with st.form("form"):
             col1, col2 = st.columns(2)
             fecha = col1.date_input("Fecha", value=date.today())
-            fondo = col2.selectbox("Fondo", list(FONDOS.keys()))
+            fondo = col2.selectbox("Fondo", list(fondos.keys()))
             titular = st.selectbox("Titular", list(titulares.keys()))
             concepto = st.text_input("Concepto")
             col3, col4 = st.columns(2)
@@ -107,22 +112,20 @@ elif pantalla == "Cargar Movimiento":
                 else:
                     try:
                         execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
+                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, fondos[fondo]))
                         st.success(f"Guardado: {concepto} | ${importe:,.2f}")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
 
     else:
-        # Saldos actuales arriba
         st.subheader("Saldos actuales")
         mostrar_saldos_fondos()
         st.markdown("---")
-
         col_form, col_tabla = st.columns([1, 2])
         with col_form:
             fecha = st.date_input("Fecha", value=date.today(), key="f")
-            fondo = st.selectbox("Fondo", list(FONDOS.keys()), key="fo")
+            fondo = st.selectbox("Fondo", list(fondos.keys()), key="fo")
             titular = st.selectbox("Titular", list(titulares.keys()), key="t")
             concepto = st.text_input("Concepto", key="c")
             importe = st.number_input("Importe (negativo=egreso)", value=0.0, step=100.0, key="i")
@@ -133,7 +136,7 @@ elif pantalla == "Cargar Movimiento":
                 else:
                     try:
                         execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
+                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, fondos[fondo]))
                         st.success(f"OK: ${importe:,.2f}")
                         st.rerun()
                     except Exception as e:
@@ -255,23 +258,19 @@ elif pantalla == "Titulares":
         st.error(f"{e}")
 
 elif pantalla == "CashFlow":
-    # Saldos por fondo siempre visibles arriba
     st.subheader("Saldos por Fondo")
     mostrar_saldos_fondos()
     st.markdown("---")
-
-    # Filtros
+    fondos = get_fondos()
     col1, col2, col3 = st.columns(3)
     mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
-    fondo_filtro = col2.selectbox("Fondo", ["Todos"] + list(FONDOS.keys()))
+    fondo_filtro = col2.selectbox("Fondo", ["Todos"] + list(fondos.keys()))
     cronologico = col3.checkbox("Orden cronologico (mas antiguo primero)")
-
     where = []
     if mes != "Todos":
         where.append(f"c.mes={mes}")
     if fondo_filtro != "Todos":
-        where.append(f"c.id_fondo={FONDOS[fondo_filtro]}")
-
+        where.append(f"c.id_fondo={fondos[fondo_filtro]}")
     sql = """
         SELECT 
             c.fecha AS "Fecha",
@@ -281,12 +280,11 @@ elif pantalla == "CashFlow":
             c.importe AS "Importe"
         FROM cashflow c
         LEFT JOIN titulares t ON c.id_titular = t.id
-        LEFT JOIN (VALUES (1,'Efectivo $'),(2,'Efectivo Ale'),(3,'Santander'),(4,'Mercado Pago'),(5,'FCI'),(6,'Cheques')) AS f(id,nombre) ON c.id_fondo = f.id
+        LEFT JOIN fondos f ON c.id_fondo = f.id
     """
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY c.fecha " + ("ASC" if cronologico else "DESC") + " LIMIT 500"
-
     try:
         df = query(sql)
         if df.empty:
@@ -321,3 +319,57 @@ elif pantalla == "Balance":
             st.metric("Resultado Neto", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
+
+elif pantalla == "── Config ──":
+    st.info("Seleccioná una opción de configuración del menu.")
+
+elif pantalla == "Fondos":
+    st.subheader("Configuracion de Fondos")
+    TIPOS_FONDO = ["Efectivo", "Banco", "Billetera Digital", "Cheques", "Inversión"]
+    MONEDAS = ["ARS", "USD", "EUR"]
+
+    # Tabla actual
+    try:
+        df = query("SELECT id, nombre, tipo, moneda, activo FROM fondos ORDER BY id")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    except Exception as e:
+        st.error(f"{e}")
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Agregar fondo**")
+        with st.form("nuevo_fondo"):
+            nombre = st.text_input("Nombre")
+            tipo = st.selectbox("Tipo", TIPOS_FONDO)
+            moneda = st.selectbox("Moneda", MONEDAS)
+            if st.form_submit_button("Agregar"):
+                if not nombre:
+                    st.error("Falta el nombre.")
+                else:
+                    try:
+                        execute("INSERT INTO fondos (nombre, tipo, moneda) VALUES (%s, %s, %s)", (nombre, tipo, moneda))
+                        st.success(f"Fondo '{nombre}' agregado.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"{e}")
+
+    with col2:
+        st.markdown("**Editar / desactivar fondo**")
+        try:
+            df_fondos = query("SELECT id, nombre FROM fondos ORDER BY id")
+            fondo_sel = st.selectbox("Fondo", df_fondos['nombre'].tolist())
+            id_sel = int(df_fondos[df_fondos['nombre'] == fondo_sel]['id'].iloc[0])
+            fila = query(f"SELECT * FROM fondos WHERE id={id_sel}").iloc[0]
+            nuevo_nombre = st.text_input("Nuevo nombre", value=fila['nombre'])
+            nuevo_tipo = st.selectbox("Tipo", TIPOS_FONDO, index=TIPOS_FONDO.index(fila['tipo']) if fila['tipo'] in TIPOS_FONDO else 0)
+            nueva_moneda = st.selectbox("Moneda", MONEDAS, index=MONEDAS.index(fila['moneda']) if fila['moneda'] in MONEDAS else 0)
+            activo = st.checkbox("Activo", value=bool(fila['activo']))
+            if st.button("Guardar cambios"):
+                execute("UPDATE fondos SET nombre=%s, tipo=%s, moneda=%s, activo=%s WHERE id=%s",
+                        (nuevo_nombre, nuevo_tipo, nueva_moneda, activo, id_sel))
+                st.success("Actualizado.")
+                st.rerun()
+        except Exception as e:
+            st.error(f"{e}")
