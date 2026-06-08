@@ -143,10 +143,7 @@ elif pantalla == "Cargar Comprobante":
                 st.error("Falta la descripcion.")
             else:
                 try:
-                    execute("""
-                        INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (fecha, titulares[titular], tipos[tipo], nro, descripcion, importe, fecha.month))
+                    execute("INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes) VALUES (%s, %s, %s, %s, %s, %s, %s)", (fecha, titulares[titular], tipos[tipo], nro, descripcion, importe, fecha.month))
                     st.success(f"Comprobante guardado: {descripcion} | ${importe:,.2f}")
                     st.rerun()
                 except Exception as e:
@@ -154,40 +151,28 @@ elif pantalla == "Cargar Comprobante":
     st.markdown("---")
     st.subheader("Ultimos comprobantes")
     try:
-        df = query("""
-            SELECT o.fecha, t.nombre Titular, tc.descripcion Tipo, o.numero_comprobante Numero,
-                   o.descripcion Concepto, o.importe Importe,
-                   CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado
-            FROM operaciones o
-            LEFT JOIN titulares t ON o.id_titular = t.id
-            LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id
-            ORDER BY o.fecha DESC LIMIT 50
-        """)
+        df = query("SELECT o.fecha, t.nombre Titular, tc.descripcion Tipo, o.numero_comprobante Numero, o.descripcion Concepto, o.importe Importe, CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado FROM operaciones o LEFT JOIN titulares t ON o.id_titular = t.id LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id ORDER BY o.fecha DESC LIMIT 50")
         st.dataframe(df, use_container_width=True, hide_index=True, height=400)
     except Exception as e:
         st.error(f"{e}")
 
 elif pantalla == "Gestion de Saldos":
-    st.subheader("Facturas impagas")
+    st.subheader("Comprobantes")
     titulares = get_titulares()
     col1, col2 = st.columns(2)
     filtro_titular = col1.selectbox("Titular", ["Todos"] + list(titulares.keys()))
     filtro_tipo = col2.selectbox("Estado", ["IMPAGO", "PAGO", "Todos"])
     where = []
-    if filtro_tipo == "IMPAGO": where.append("o.id_pago IS NULL")
-    elif filtro_tipo == "PAGO": where.append("o.id_pago IS NOT NULL")
+    if filtro_tipo == "IMPAGO":
+        where.append("o.id_pago IS NULL")
+    elif filtro_tipo == "PAGO":
+        where.append("o.id_pago IS NOT NULL")
     if filtro_titular != "Todos":
-        where.append(f"o.id_titular = '{titulares[filtro_titular]}'")
-    sql = """
-        SELECT o.id, o.fecha, t.nombre Titular, tc.descripcion Tipo,
-               o.numero_comprobante Numero, o.descripcion Concepto,
-               o.importe Importe,
-               CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado
-        FROM operaciones o
-        LEFT JOIN titulares t ON o.id_titular = t.id
-        LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id
-    """
-    if where: sql += " WHERE " + " AND ".join(where)
+        tid = titulares[filtro_titular]
+        where.append(f"o.id_titular = '{tid}'")
+    sql = "SELECT o.id, o.fecha, t.nombre Titular, tc.descripcion Tipo, o.numero_comprobante Numero, o.descripcion Concepto, o.importe Importe, CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado FROM operaciones o LEFT JOIN titulares t ON o.id_titular = t.id LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY o.fecha DESC LIMIT 200"
     try:
         df = query(sql)
@@ -205,20 +190,7 @@ elif pantalla == "Cuenta Corriente":
     titular = st.selectbox("Seleccionar titular", list(titulares.keys()))
     id_titular = titulares[titular]
     try:
-        df = query(f"""
-            SELECT
-                o.fecha,
-                tc.descripcion Tipo,
-                o.numero_comprobante Numero,
-                o.descripcion Concepto,
-                o.importe Debe,
-                CASE WHEN o.id_pago IS NOT NULL THEN o.importe ELSE 0 END Haber,
-                CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado
-            FROM operaciones o
-            LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id
-            WHERE o.id_titular = '{id_titular}'
-            ORDER BY o.fecha ASC
-        """)
+        df = query(f"SELECT o.fecha, tc.descripcion Tipo, o.numero_comprobante Numero, o.descripcion Concepto, o.importe Debe, CASE WHEN o.id_pago IS NOT NULL THEN o.importe ELSE 0 END Haber, CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado FROM operaciones o LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id WHERE o.id_titular = '{id_titular}' ORDER BY o.fecha ASC")
         if df.empty:
             st.info(f"Sin movimientos para {titular}.")
         else:
@@ -237,9 +209,12 @@ elif pantalla == "Plan de Cuentas":
     buscar = col2.text_input("Buscar")
     sql = "SELECT niv1_desc Tipo, niv2_desc Subtipo, nombre Cuenta, signo Signo FROM plan_de_cuentas"
     where = []
-    if tipo != "Todos": where.append(f"niv1_desc='{tipo}'")
-    if buscar: where.append(f"nombre ILIKE '%{buscar}%'")
-    if where: sql += " WHERE " + " AND ".join(where)
+    if tipo != "Todos":
+        where.append(f"niv1_desc='{tipo}'")
+    if buscar:
+        where.append(f"nombre ILIKE '%{buscar}%'")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY niv1,niv2,niv3,niv4,niv5"
     try:
         st.dataframe(query(sql), use_container_width=True, hide_index=True, height=550)
@@ -249,7 +224,8 @@ elif pantalla == "Plan de Cuentas":
 elif pantalla == "Titulares":
     buscar = st.text_input("Buscar")
     sql = "SELECT id, nivel1 Tipo, nombre FROM titulares"
-    if buscar: sql += f" WHERE nombre ILIKE '%{buscar}%'"
+    if buscar:
+        sql += f" WHERE nombre ILIKE '%{buscar}%'"
     sql += " ORDER BY nivel1, nombre"
     try:
         st.dataframe(query(sql), use_container_width=True, hide_index=True, height=550)
@@ -262,8 +238,38 @@ elif pantalla == "CashFlow":
     buscar = col2.text_input("Buscar")
     cronologico = col3.checkbox("Orden cronologico (mas antiguo primero)")
     where = []
-    if mes != "Todos": where.append(f"mes={mes}")
-    if buscar: where.append(f"detalle ILIKE '%{buscar}%'")
+    if mes != "Todos":
+        where.append(f"mes={mes}")
+    if buscar:
+        where.append(f"detalle ILIKE '%{buscar}%'")
     sql = "SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow"
-    if where: sql += " WHERE " + " AND ".join(where)
-    sql += " OR
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    if cronologico:
+        sql += " ORDER BY fecha ASC LIMIT 500"
+    else:
+        sql += " ORDER BY fecha DESC LIMIT 500"
+    try:
+        df = query(sql)
+        st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+        st.metric("Total", f"${df['importe'].sum():,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
+
+elif pantalla == "Balance":
+    mes = st.selectbox("Mes", ["Todos","1-Enero","2-Febrero","3-Marzo","4-Abril","5-Mayo","6-Junio","7-Julio","8-Agosto","9-Septiembre","10-Octubre","11-Noviembre","12-Diciembre"])
+    mes_num = None if mes == "Todos" else int(mes.split("-")[0])
+    try:
+        where_mes = f"AND EXTRACT(MONTH FROM c.fecha)={mes_num}" if mes_num else ""
+        df = query(f"SELECT p.niv2_desc Subtipo, p.nombre Cuenta, COALESCE(SUM(c.importe),0) Importe FROM plan_de_cuentas p LEFT JOIN cashflow c ON c.detalle=p.nombre {where_mes} WHERE p.niv1=1 GROUP BY p.niv2_desc,p.nombre,p.niv1,p.niv2,p.niv3,p.niv4,p.niv5 HAVING COALESCE(SUM(c.importe),0)<>0 ORDER BY p.niv1,p.niv2,p.niv3,p.niv4,p.niv5")
+        if df.empty:
+            st.info("Sin datos.")
+        else:
+            for sub in df["Subtipo"].unique():
+                st.markdown(f"**{sub}**")
+                s = df[df["Subtipo"]==sub][["Cuenta","Importe"]]
+                st.dataframe(s, use_container_width=True, hide_index=True)
+                st.markdown(f"Total: **${s['Importe'].sum():,.2f}**")
+            st.metric("Resultado Neto", f"${df['Importe'].sum():,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
