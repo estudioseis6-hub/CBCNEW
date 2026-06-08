@@ -33,6 +33,13 @@ def get_titulares():
     df = query("SELECT id, nombre FROM titulares ORDER BY nombre")
     return dict(zip(df['nombre'], df['id']))
 
+def get_titulares_movimiento():
+    # Sin Titular aparece primero
+    df = query("SELECT id, nombre FROM titulares WHERE nivel1 = 'SISTEMA' ORDER BY nombre")
+    df2 = query("SELECT id, nombre FROM titulares WHERE nivel1 != 'SISTEMA' ORDER BY nombre")
+    df_all = pd.concat([df, df2], ignore_index=True)
+    return dict(zip(df_all['nombre'], df_all['id']))
+
 def get_tipos_comprobante():
     df = query("SELECT id, descripcion FROM tipos_comprobante WHERE activo=true ORDER BY id")
     return dict(zip(df['descripcion'], df['id']))
@@ -40,6 +47,21 @@ def get_tipos_comprobante():
 def get_fondos():
     df = query("SELECT id, nombre FROM fondos WHERE activo=true ORDER BY id")
     return dict(zip(df['nombre'], df['id']))
+
+def get_fondos_completo():
+    return query("SELECT id, nombre, tipo, saldo_inicial, permite_negativo FROM fondos WHERE activo=true ORDER BY id")
+
+def get_saldo_fondo(id_fondo):
+    r = query(f"""
+        SELECT f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
+        FROM fondos f
+        LEFT JOIN cashflow c ON c.id_fondo = f.id
+        WHERE f.id = {id_fondo}
+        GROUP BY f.saldo_inicial
+    """)
+    if r.empty:
+        return 0.0
+    return float(r.iloc[0]['saldo_inicial']) + float(r.iloc[0]['movimientos'])
 
 def get_ultimos(limit=20):
     return query(f"SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
@@ -94,8 +116,23 @@ if pantalla == "Dashboard":
 
 elif pantalla == "Cargar Movimiento":
     modo = st.radio("Modo", ["Formulario", "Pantalla completa"], horizontal=True)
-    titulares = get_titulares()
+    titulares = get_titulares_movimiento()
     fondos = get_fondos()
+    fondos_completo = get_fondos_completo()
+
+    def guardar_movimiento(fecha, fondo_nombre, titular_nombre, concepto, importe, cuenta):
+        id_fondo = fondos[fondo_nombre]
+        id_titular = titulares[titular_nombre]
+        # Validar saldo negativo
+        fila_fondo = fondos_completo[fondos_completo['id'] == id_fondo].iloc[0]
+        if not fila_fondo['permite_negativo']:
+            saldo_actual = get_saldo_fondo(id_fondo)
+            if saldo_actual + importe < 0:
+                st.error(f"Saldo insuficiente en {fondo_nombre}. Saldo actual: ${saldo_actual:,.2f}")
+                return False
+        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (fecha.month, fecha, id_titular, cuenta, concepto, importe, id_fondo))
+        return True
 
     if modo == "Formulario":
         with st.form("form"):
@@ -111,13 +148,9 @@ elif pantalla == "Cargar Movimiento":
                 if not concepto:
                     st.error("Falta el concepto.")
                 else:
-                    try:
-                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, fondos[fondo]))
+                    if guardar_movimiento(fecha, fondo, titular, concepto, importe, cuenta):
                         st.success(f"Guardado: {concepto} | ${importe:,.2f}")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
 
     else:
         st.subheader("Saldos actuales")
@@ -135,13 +168,9 @@ elif pantalla == "Cargar Movimiento":
                 if not concepto:
                     st.error("Falta concepto.")
                 else:
-                    try:
-                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                                (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, fondos[fondo]))
+                    if guardar_movimiento(fecha, fondo, titular, concepto, importe, cuenta):
                         st.success(f"OK: ${importe:,.2f}")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
         with col_tabla:
             try:
                 st.dataframe(get_ultimos(15), use_container_width=True, hide_index=True, height=450)
@@ -316,7 +345,7 @@ elif pantalla == "Balance":
                 st.markdown(f"**{sub}**")
                 s = df[df["Subtipo"]==sub][["Cuenta","Importe"]]
                 st.dataframe(s, use_container_width=True, hide_index=True)
-                st.markdown( f"Total: **${s['Importe'].sum():,.2f}**")
+                st.markdown(f"Total: **${s['Importe'].sum():,.2f}**")
             st.metric("Resultado Neto", f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
