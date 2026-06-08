@@ -35,12 +35,16 @@ def get_titulares():
     df = query("SELECT id, nombre FROM titulares ORDER BY nombre")
     return dict(zip(df['nombre'], df['id']))
 
+def get_tipos_comprobante():
+    df = query("SELECT id, descripcion FROM tipos_comprobante WHERE activo=true ORDER BY id")
+    return dict(zip(df['descripcion'], df['id']))
+
 def get_ultimos(limit=20):
     return query(f"SELECT fecha, id_titular, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
 
 with st.sidebar:
     st.markdown("### CBC Sistema Contable")
-    pantalla = st.radio("Menu", ["Dashboard", "Cargar Movimiento", "Plan de Cuentas", "Titulares", "CashFlow", "Balance"])
+    pantalla = st.radio("Menu", ["Dashboard", "Cargar Movimiento", "Cargar Comprobante", "Gestion de Saldos", "Plan de Cuentas", "Titulares", "CashFlow", "Balance"])
     st.caption("Neon PostgreSQL")
 
 st.title("CBC Sistema Contable")
@@ -110,6 +114,78 @@ elif pantalla == "Cargar Movimiento":
                 st.dataframe(get_ultimos(15), use_container_width=True, hide_index=True, height=450)
             except Exception as e:
                 st.error(f"{e}")
+
+elif pantalla == "Cargar Comprobante":
+    st.subheader("Nuevo comprobante")
+    titulares = get_titulares()
+    tipos = get_tipos_comprobante()
+    with st.form("form_comp"):
+        col1, col2, col3 = st.columns(3)
+        fecha = col1.date_input("Fecha", value=date.today())
+        tipo = col2.selectbox("Tipo comprobante", list(tipos.keys()))
+        nro = col3.text_input("Numero comprobante")
+        titular = st.selectbox("Titular", list(titulares.keys()))
+        descripcion = st.text_input("Descripcion")
+        col4, col5 = st.columns(2)
+        importe = col4.number_input("Importe", value=0.0, step=100.0)
+        if st.form_submit_button("Guardar comprobante", use_container_width=True):
+            if not descripcion:
+                st.error("Falta la descripcion.")
+            else:
+                try:
+                    execute("""
+                        INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (fecha, titulares[titular], tipos[tipo], nro, descripcion, importe, fecha.month))
+                    st.success(f"Comprobante guardado: {descripcion} | ${importe:,.2f}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    st.markdown("---")
+    st.subheader("Ultimos comprobantes")
+    try:
+        df = query("""
+            SELECT o.fecha, t.nombre Titular, tc.descripcion Tipo, o.numero_comprobante Numero,
+                   o.descripcion Concepto, o.importe Importe,
+                   CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado
+            FROM operaciones o
+            LEFT JOIN titulares t ON o.id_titular = t.id
+            LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id
+            ORDER BY o.fecha DESC LIMIT 50
+        """)
+        st.dataframe(df, use_container_width=True, hide_index=True, height=400)
+    except Exception as e:
+        st.error(f"{e}")
+
+elif pantalla == "Gestion de Saldos":
+    st.subheader("Facturas impagas")
+    titulares = get_titulares()
+    col1, col2 = st.columns(2)
+    filtro_titular = col1.selectbox("Titular", ["Todos"] + list(titulares.keys()))
+    filtro_tipo = col2.selectbox("Tipo", ["Todos", "IMPAGO", "PAGO"])
+    where = ["o.id_pago IS NULL"] if filtro_tipo == "IMPAGO" else [] if filtro_tipo == "Todos" else ["o.id_pago IS NOT NULL"]
+    if filtro_titular != "Todos":
+        where.append(f"o.id_titular = '{titulares[filtro_titular]}'")
+    sql = """
+        SELECT o.id, o.fecha, t.nombre Titular, tc.descripcion Tipo,
+               o.numero_comprobante Numero, o.descripcion Concepto,
+               o.importe Importe,
+               CASE WHEN o.id_pago IS NULL THEN 'IMPAGO' ELSE 'PAGO' END Estado
+        FROM operaciones o
+        LEFT JOIN titulares t ON o.id_titular = t.id
+        LEFT JOIN tipos_comprobante tc ON o.id_tipo_comprobante = tc.id
+    """
+    if where: sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY o.fecha DESC LIMIT 200"
+    try:
+        df = query(sql)
+        if df.empty:
+            st.info("No hay comprobantes.")
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+            st.metric("Total impago", f"${df['Importe'].sum():,.2f}")
+    except Exception as e:
+        st.error(f"{e}")
 
 elif pantalla == "Plan de Cuentas":
     col1, col2 = st.columns(2)
