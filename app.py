@@ -9,6 +9,7 @@ st.set_page_config(page_title="CBC", page_icon="📊", layout="wide")
 DB = "postgresql://neondb_owner:npg_0QazKFN8logm@ep-sweet-block-aq1035ng-pooler.c-8.us-east-1.aws.neon.tech/neondb?sslmode=require"
 
 FONDOS = {"1 - Efectivo $": 1, "2 - Efectivo Ale": 2, "3 - Santander": 3, "4 - Mercado Pago": 4, "5 - FCI": 5, "6 - Cheques": 6}
+FONDOS_INV = {v: k for k, v in FONDOS.items()}
 
 def get_conn():
     return psycopg2.connect(DB, cursor_factory=RealDictCursor)
@@ -40,7 +41,7 @@ def get_tipos_comprobante():
     return dict(zip(df['descripcion'], df['id']))
 
 def get_ultimos(limit=20):
-    return query(f"SELECT fecha, id_titular, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
+    return query(f"SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
 
 with st.sidebar:
     st.markdown("### CBC Sistema Contable")
@@ -88,7 +89,7 @@ elif pantalla == "Cargar Movimiento":
                     st.error("Falta el concepto.")
                 else:
                     try:
-                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe) VALUES (%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe))
+                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
                         st.success(f"Guardado: {concepto} | ${importe:,.2f}")
                         st.rerun()
                     except Exception as e:
@@ -114,7 +115,7 @@ elif pantalla == "Cargar Movimiento":
                     st.error("Falta concepto.")
                 else:
                     try:
-                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe) VALUES (%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe))
+                        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)", (fecha.month, fecha, titulares[titular], cuenta, concepto, importe, FONDOS[fondo]))
                         st.success(f"OK: ${importe:,.2f}")
                         st.rerun()
                     except Exception as e:
@@ -237,24 +238,46 @@ elif pantalla == "Titulares":
 elif pantalla == "CashFlow":
     col1, col2, col3 = st.columns(3)
     mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
-    buscar = col2.text_input("Buscar")
+    fondo_filtro = col2.selectbox("Fondo", ["Todos"] + list(FONDOS.keys()))
     cronologico = col3.checkbox("Orden cronologico (mas antiguo primero)")
+
     where = []
     if mes != "Todos":
         where.append(f"mes={mes}")
-    if buscar:
-        where.append(f"detalle ILIKE '%{buscar}%'")
-    sql = "SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow"
+    if fondo_filtro != "Todos":
+        where.append(f"id_fondo={FONDOS[fondo_filtro]}")
+
+    sql = """
+        SELECT 
+            c.fecha,
+            COALESCE(t.nombre, c.id_titular::text) AS \"Titular\",
+            c.cod_cuenta AS \"Cuenta\",
+            c.detalle AS \"Detalle\",
+            c.importe AS \"Importe\"
+        FROM cashflow c
+        LEFT JOIN titulares t ON c.id_titular = t.id
+    """
     if where:
         sql += " WHERE " + " AND ".join(where)
-    if cronologico:
-        sql += " ORDER BY fecha ASC LIMIT 500"
-    else:
-        sql += " ORDER BY fecha DESC LIMIT 500"
+    sql += " ORDER BY c.fecha " + ("ASC" if cronologico else "DESC") + " LIMIT 500"
+
     try:
         df = query(sql)
-        st.dataframe(df, use_container_width=True, hide_index=True, height=500)
-        st.metric("Total", f"${df['importe'].sum():,.2f}")
+        if df.empty:
+            st.info("Sin movimientos.")
+        else:
+            # Saldo acumulado por fondo seleccionado o global
+            df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
+            if cronologico:
+                df['Saldo'] = df['Importe'].cumsum()
+            else:
+                df['Saldo'] = df['Importe'].cumsum()
+
+            st.dataframe(df, use_container_width=True, hide_index=True, height=500)
+
+            col1, col2 = st.columns(2)
+            col1.metric("Total movimientos", len(df))
+            col2.metric("Saldo" + (f" {fondo_filtro}" if fondo_filtro != "Todos" else ""), f"${df['Importe'].sum():,.2f}")
     except Exception as e:
         st.error(f"{e}")
 
