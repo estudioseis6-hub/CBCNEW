@@ -110,7 +110,20 @@ with st.sidebar:
     ])
     st.caption("Neon PostgreSQL")
 
-st.title("CBC Sistema Contable")
+titulos = {
+    "Dashboard": "Dashboard",
+    "Cargar Movimiento": "Cargar Movimiento",
+    "Cargar Comprobante": "Cargar Comprobante",
+    "Gestion de Saldos": "Gestión de Saldos",
+    "Cuenta Corriente": "Cuenta Corriente",
+    "Plan de Cuentas": "Plan de Cuentas",
+    "Titulares": "Titulares",
+    "CashFlow": "Tesorería",
+    "Balance": "Balance",
+    "── Config ──": "Configuración",
+    "Fondos": "Configuración — Fondos",
+}
+st.title(titulos.get(pantalla, "CBC"))
 
 if pantalla == "Dashboard":
     try:
