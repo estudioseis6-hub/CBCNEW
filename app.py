@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import date
+from datetime import date, timedelta
 
 st.set_page_config(page_title="CBC", page_icon="📊", layout="wide")
 
@@ -26,6 +26,17 @@ def execute(sql, params=None):
         with conn.cursor() as cur:
             cur.execute(sql, params)
         conn.commit()
+    finally:
+        conn.close()
+
+def execute_returning(sql, params=None):
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            result = cur.fetchone()
+        conn.commit()
+        return result
     finally:
         conn.close()
 
@@ -54,7 +65,7 @@ def get_fondos():
     return dict(zip(df['nombre'], df['id']))
 
 def get_fondos_completo():
-    return query("SELECT id, nombre, tipo, saldo_inicial, permite_negativo FROM fondos WHERE activo=true ORDER BY id")
+    return query("SELECT id, nombre, tipo, moneda, saldo_inicial, permite_negativo FROM fondos WHERE activo=true ORDER BY id")
 
 def get_cuentas():
     df = query("SELECT nombre FROM plan_de_cuentas ORDER BY niv1,niv2,niv3,niv4,niv5")
@@ -71,6 +82,18 @@ def get_saldo_fondo(id_fondo):
     if r.empty:
         return 0.0
     return float(r.iloc[0]['saldo_inicial']) + float(r.iloc[0]['movimientos'])
+
+def get_plazo_titular(id_titular):
+    r = query(f"SELECT plazo_pago FROM titulares WHERE id = '{id_titular}'")
+    if r.empty or r.iloc[0]['plazo_pago'] is None:
+        return None
+    return int(r.iloc[0]['plazo_pago'])
+
+def get_fondo_def_titular(id_titular):
+    r = query(f"SELECT fondo_def FROM titulares WHERE id = '{id_titular}'")
+    if r.empty or r.iloc[0]['fondo_def'] is None:
+        return None
+    return r.iloc[0]['fondo_def']
 
 def get_ultimos(limit=20):
     return query(f"SELECT fecha, id_titular, cod_cuenta, detalle, importe FROM cashflow ORDER BY fecha DESC LIMIT {limit}")
@@ -160,7 +183,7 @@ elif pantalla == "Cargar Movimiento":
             if saldo_actual + importe < 0:
                 st.error(f"Saldo insuficiente en {fondo_nombre}. Saldo actual: ${saldo_actual:,.2f}")
                 return False
-        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        execute("INSERT INTO cashflow (mes,fecha,id_titular,cod_cuenta,detalle,importe,id_fondo,confirmado) VALUES (%s,%s,%s,%s,%s,%s,%s,true)",
                 (fecha.month, fecha, id_titular, cuenta, concepto, importe, id_fondo))
         return True
 
@@ -213,26 +236,86 @@ elif pantalla == "Cargar Comprobante":
     st.subheader("Nuevo comprobante")
     titulares = get_titulares()
     tipos = get_tipos_comprobante()
-    with st.form("form_comp"):
-        col1, col2, col3 = st.columns(3)
-        fecha = col1.date_input("Fecha", value=date.today())
-        tipo = col2.selectbox("Tipo comprobante", list(tipos.keys()))
-        nro = col3.text_input("Numero comprobante")
-        titular = st.selectbox("Titular", list(titulares.keys()))
-        descripcion = st.text_input("Descripcion")
-        col4, col5 = st.columns(2)
-        importe = col4.number_input("Importe", value=0.0, step=100.0)
-        if st.form_submit_button("Guardar comprobante", use_container_width=True):
-            if not descripcion:
-                st.error("Falta la descripcion.")
-            else:
-                try:
-                    execute("INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                            (fecha, titulares[titular], tipos[tipo], nro, descripcion, importe, fecha.month))
-                    st.success(f"Comprobante guardado: {descripcion} | ${importe:,.2f}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+    fondos = get_fondos()
+
+    # Estado para manejar el caso sin plazo
+    if 'comp_esperando_fecha' not in st.session_state:
+        st.session_state.comp_esperando_fecha = False
+    if 'comp_datos_pendientes' not in st.session_state:
+        st.session_state.comp_datos_pendientes = {}
+
+    def guardar_comprobante_con_proyeccion(fecha, id_tipo, nro, id_titular, descripcion, importe, fecha_vencimiento, id_fondo):
+        # 1. Guardar en operaciones y obtener el id
+        result = execute_returning(
+            "INSERT INTO operaciones (fecha, id_titular, id_tipo_comprobante, numero_comprobante, descripcion, importe, mes) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (fecha, id_titular, id_tipo, nro, descripcion, importe, fecha.month)
+        )
+        id_operacion = result['id']
+
+        # 2. Generar movimiento proyectado en cashflow (egreso = negativo)
+        execute(
+            "INSERT INTO cashflow (mes, fecha, id_titular, detalle, importe, id_fondo, id_operacion, confirmado) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (fecha_vencimiento.month, fecha_vencimiento, id_titular, descripcion, -abs(importe), id_fondo, id_operacion, False)
+        )
+        return id_operacion
+
+    # Formulario principal
+    if not st.session_state.comp_esperando_fecha:
+        with st.form("form_comp"):
+            col1, col2, col3 = st.columns(3)
+            fecha = col1.date_input("Fecha", value=date.today())
+            tipo = col2.selectbox("Tipo comprobante", list(tipos.keys()))
+            nro = col3.text_input("Numero comprobante")
+            titular = st.selectbox("Titular", list(titulares.keys()))
+            descripcion = st.text_input("Descripcion")
+            col4, col5 = st.columns(2)
+            importe = col4.number_input("Importe", value=0.0, step=100.0)
+            fondo = col5.selectbox("Fondo de pago", list(fondos.keys()))
+            if st.form_submit_button("Guardar comprobante", use_container_width=True):
+                if not descripcion:
+                    st.error("Falta la descripcion.")
+                else:
+                    id_titular = titulares[titular]
+                    id_tipo = tipos[tipo]
+                    id_fondo = fondos[fondo]
+                    plazo = get_plazo_titular(id_titular)
+                    if plazo is not None and plazo > 0:
+                        fecha_vencimiento = fecha + timedelta(days=plazo)
+                        guardar_comprobante_con_proyeccion(fecha, id_tipo, nro, id_titular, descripcion, importe, fecha_vencimiento, id_fondo)
+                        st.success(f"Comprobante guardado. Vencimiento proyectado: {fecha_vencimiento.strftime('%d/%m/%Y')} ({plazo} dias)")
+                        st.rerun()
+                    else:
+                        # Sin plazo — guardar datos y pedir fecha
+                        st.session_state.comp_datos_pendientes = {
+                            'fecha': fecha, 'id_tipo': id_tipo, 'nro': nro,
+                            'id_titular': id_titular, 'titular_nombre': titular,
+                            'descripcion': descripcion, 'importe': importe, 'id_fondo': id_fondo
+                        }
+                        st.session_state.comp_esperando_fecha = True
+                        st.rerun()
+    else:
+        # Pedir fecha de vencimiento manual
+        datos = st.session_state.comp_datos_pendientes
+        st.warning(f"⚠️ {datos['titular_nombre']} no tiene plazo de cancelacion configurado.")
+        st.markdown(f"**Comprobante:** {datos['descripcion']} | **Importe:** ${datos['importe']:,.2f}")
+        st.markdown("¿Cuando debe cancelarse esta factura?")
+        fecha_manual = st.date_input("Fecha de vencimiento", value=date.today() + timedelta(days=30))
+        col1, col2 = st.columns(2)
+        if col1.button("Confirmar y guardar", use_container_width=True):
+            guardar_comprobante_con_proyeccion(
+                datos['fecha'], datos['id_tipo'], datos['nro'],
+                datos['id_titular'], datos['descripcion'], datos['importe'],
+                fecha_manual, datos['id_fondo']
+            )
+            st.session_state.comp_esperando_fecha = False
+            st.session_state.comp_datos_pendientes = {}
+            st.success(f"Guardado. Vencimiento: {fecha_manual.strftime('%d/%m/%Y')}")
+            st.rerun()
+        if col2.button("Cancelar", use_container_width=True):
+            st.session_state.comp_esperando_fecha = False
+            st.session_state.comp_datos_pendientes = {}
+            st.rerun()
+
     st.markdown("---")
     st.subheader("Ultimos comprobantes")
     try:
@@ -310,7 +393,7 @@ elif pantalla == "Plan de Cuentas":
 
 elif pantalla == "Titulares":
     buscar = st.text_input("Buscar")
-    sql = "SELECT id, nivel1 Tipo, nombre FROM titulares"
+    sql = "SELECT id, nivel1 Tipo, nombre, plazo_pago Plazo, tipo_titular FROM titulares"
     if buscar:
         sql += f" WHERE nombre ILIKE '%{buscar}%'"
     sql += " ORDER BY nivel1, nombre"
@@ -323,6 +406,48 @@ elif pantalla == "Tesoreria":
     compra_usd, venta_usd = get_dolar_blue()
     cotizacion = compra_usd if compra_usd else 0
 
+    # --- Panel vencimientos del dia ---
+    try:
+        hoy = date.today()
+        vencimientos = query(f"""
+            SELECT c.id, c.fecha, COALESCE(t.nombre, c.id_titular::text) as titular,
+                   f.nombre as fondo, c.detalle, c.importe
+            FROM cashflow c
+            LEFT JOIN titulares t ON c.id_titular = t.id
+            LEFT JOIN fondos f ON c.id_fondo = f.id
+            WHERE c.confirmado = false AND c.fecha <= '{hoy}'
+            ORDER BY c.fecha ASC
+        """)
+        if not vencimientos.empty:
+            st.error(f"⚠️ Tenes {len(vencimientos)} pago(s) pendiente(s) de confirmar")
+            with st.expander("Ver vencimientos pendientes", expanded=True):
+                for _, row in vencimientos.iterrows():
+                    col1, col2, col3, col4 = st.columns([2,2,1,1])
+                    col1.markdown(f"**{row['titular']}**  \n{row['detalle']}")
+                    col2.markdown(f"Fondo: {row['fondo']}  \nVto: {pd.to_datetime(row['fecha']).strftime('%d/%m/%Y')}")
+                    col3.markdown(f"**${abs(float(row['importe'])):,.2f}**")
+                    c1, c2 = col4.columns(2)
+                    if c1.button("✓", key=f"conf_{row['id']}", help="Confirmar pago hoy"):
+                        execute("UPDATE cashflow SET confirmado=true, fecha=%s, mes=%s WHERE id=%s",
+                                (hoy, hoy.month, int(row['id'])))
+                        st.success("Confirmado")
+                        st.rerun()
+                    if c2.button("↷", key=f"reprog_{row['id']}", help="Reprogramar"):
+                        st.session_state[f'reprog_{row["id"]}'] = True
+                        st.rerun()
+                    if st.session_state.get(f'reprog_{row["id"]}'):
+                        nueva_fecha = st.date_input("Nueva fecha", value=hoy + timedelta(days=7), key=f"nf_{row['id']}")
+                        if st.button("Guardar nueva fecha", key=f"gf_{row['id']}"):
+                            execute("UPDATE cashflow SET fecha=%s, mes=%s WHERE id=%s",
+                                    (nueva_fecha, nueva_fecha.month, int(row['id'])))
+                            st.session_state[f'reprog_{row["id"]}'] = False
+                            st.success("Reprogramado")
+                            st.rerun()
+            st.markdown("---")
+    except Exception as e:
+        st.error(f"{e}")
+
+    # --- Saldos por fondo ---
     try:
         saldos = query("""
             SELECT f.id, f.nombre, f.tipo, f.moneda, f.saldo_inicial, COALESCE(SUM(c.importe),0) as movimientos
@@ -337,15 +462,13 @@ elif pantalla == "Tesoreria":
             tipos_libres = ['Efectivo', 'Banco', 'Billetera Digital']
             total_libre_ars = 0
 
-            # Construir lista de columnas a mostrar
-            # Cada fondo ARS = 1 col, cada fondo USD = 2 cols, mas col cotizacion y total
             header_cols = []
             for _, row in saldos.iterrows():
                 header_cols.append(row['nombre'])
                 if row['moneda'] == 'USD':
                     header_cols.append(f"{row['nombre']} (ARS)")
 
-            n_cols = len(header_cols) + 2  # + cotizacion + libre disponibilidad
+            n_cols = len(header_cols) + 2
             cols = st.columns(n_cols)
 
             col_idx = 0
@@ -372,14 +495,12 @@ elif pantalla == "Tesoreria":
                     cols[col_idx].metric(f"≈ ARS", f"${saldo_ars:,.2f}")
                     col_idx += 1
 
-            # Cotizacion blue
             if compra_usd:
                 cols[col_idx].metric("USD Blue", f"${compra_usd:,.2f}")
             else:
                 cols[col_idx].metric("USD Blue", "N/D")
             col_idx += 1
 
-            # Total libre disponibilidad
             cols[col_idx].metric("Libre disponibilidad", f"${total_libre_ars:,.2f}")
 
             fondo_seleccionado = st.session_state.get('fondo_cf', 'Todos')
@@ -390,6 +511,8 @@ elif pantalla == "Tesoreria":
         st.error(f"{e}")
 
     st.markdown("---")
+
+    # --- Tabla de movimientos con color para proyectados ---
     fondos = get_fondos()
     col1, col2 = st.columns(2)
     mes = col1.selectbox("Mes", ["Todos","1","2","3","4","5","6","7","8","9","10","11","12"])
@@ -408,7 +531,8 @@ elif pantalla == "Tesoreria":
             COALESCE(t.nombre, c.id_titular::text) AS "Titular",
             f.nombre AS "Fondo",
             c.detalle AS "Detalle",
-            c.importe AS "Importe"
+            c.importe AS "Importe",
+            c.confirmado AS "confirmado"
         FROM cashflow c
         LEFT JOIN titulares t ON c.id_titular = t.id
         LEFT JOIN fondos f ON c.id_fondo = f.id
@@ -422,11 +546,33 @@ elif pantalla == "Tesoreria":
             st.info("Sin movimientos.")
         else:
             df['Importe'] = pd.to_numeric(df['Importe'], errors='coerce').fillna(0)
+            df['confirmado'] = df['confirmado'].astype(bool)
+
             if fondo_seleccionado != 'Todos':
                 df_asc = df.iloc[::-1].copy() if not cronologico else df.copy()
                 df_asc['Saldo'] = df_asc['Importe'].cumsum()
                 df = df_asc.iloc[::-1].copy() if not cronologico else df_asc
-            st.dataframe(fmt_fecha(df), use_container_width=True, hide_index=True, height=500)
+
+            # Marcar proyectados
+            df['Estado'] = df.apply(
+                lambda r: 'PROYECTADO' if not r['confirmado'] else '',
+                axis=1
+            )
+
+            df_mostrar = df.drop(columns=['confirmado']).copy()
+            df_mostrar['Fecha'] = pd.to_datetime(df_mostrar['Fecha']).dt.strftime('%a %d %b %Y').str.title()
+
+            def colorear_fila(row):
+                if row['Estado'] == 'PROYECTADO':
+                    return ['background-color: #fff3cd; color: #856404'] * len(row)
+                return [''] * len(row)
+
+            st.dataframe(
+                df_mostrar.style.apply(colorear_fila, axis=1),
+                use_container_width=True,
+                hide_index=True,
+                height=500
+            )
             col1, col2 = st.columns(2)
             col1.metric("Movimientos", len(df))
             col2.metric("Total periodo", f"${df['Importe'].sum():,.2f}")
